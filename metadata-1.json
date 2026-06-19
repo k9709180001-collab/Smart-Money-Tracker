@@ -1,0 +1,6 @@
+{
+  "name": "Derivatives Analyst Dashboard",
+  "description": "Professional-grade derivatives visual analyst. Inputs or parses Option Chain & FII/DII data to analyze PCR, support/resistance, market traps, and simulate optimized options strategies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
