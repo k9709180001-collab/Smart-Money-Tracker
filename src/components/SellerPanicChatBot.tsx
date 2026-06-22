@@ -30,7 +30,7 @@ export default function SellerPanicChatBot({
     {
       id: "initial-greet",
       role: "model",
-      text: "Arre bhai! Main hoon aapka **Quanta Option Shikar Dev** 🐯! Main live market metrics, dynamic option writing changes aur FII/DII patterns ko scan karke tactical option buying guide karta hoon.\n\nOption seller ek shatir player hota hai. Jab tak market rest mode pe hai, hum trade nahi karenge. Par jaise hi parameters cover hone lagen, hum momentum pakadenge! Aap kya check karna chahte hain?",
+      text: "Arre bhai! Main hoon aapka **AshTek Option Shikar Dev** 🐯! Main live market metrics, dynamic option writing changes aur FII/DII patterns ko scan karke tactical option buying guide karta hoon.\n\nOption seller ek shatir player hota hai. Jab tak market rest mode pe hai, hum trade nahi karenge. Par jaise hi parameters cover hone lagen, hum momentum pakadenge! Aap kya check karna chahte hain?",
       timestamp: new Date()
     }
   ]);
@@ -151,6 +151,11 @@ export default function SellerPanicChatBot({
 
       if (!response.ok) {
         throw new Error("Chat response status error");
+      }
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Invalid response received from server. Expected JSON data.");
       }
 
       const data = await response.json();

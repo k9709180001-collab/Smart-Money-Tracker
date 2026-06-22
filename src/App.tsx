@@ -17,15 +17,39 @@ import IndiaVixTracker from "./components/IndiaVixTracker";
 import PriceActionAlertManager from "./components/PriceActionAlertManager";
 import SellerPanicDashboard from "./components/SellerPanicDashboard";
 import SellerPanicChatBot from "./components/SellerPanicChatBot";
+import IndexChartViewer from "./components/IndexChartViewer";
+import AtmSportsAnalyzer from "./components/AtmSportsAnalyzer";
+import ExpiryAnalyzer from "./components/ExpiryAnalyzer";
+import StrategySimulator from "./components/StrategySimulator";
 import { parseSensibullCSV } from "./utils/csvParser";
 import { 
   TrendingUp, TrendingDown, Clipboard, AlertTriangle, Play, HelpCircle, 
   BrainCircuit, Sparkles, BookOpen, BarChart3, LineChart, FileText, ChevronRight,
-  Upload, Image, RefreshCw, FileUp, CheckCircle2, Globe 
+  Upload, Image, RefreshCw, FileUp, CheckCircle2, Globe, Target, Layers, Hourglass, Flame, Trophy, Sliders
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
+async function safeResponseJson(response: Response, defaultMessage: string = "Request failed on server.") {
+  const contentType = response.headers.get("content-type");
+  if (!contentType || !contentType.includes("application/json")) {
+    const text = await response.text();
+    if (text.trim().startsWith("<")) {
+      throw new Error(`${defaultMessage} (Server returned HTML page. The app backend may be warming up or restarting. Try again in a few seconds)`);
+    }
+    throw new Error(text.slice(0, 150) || defaultMessage);
+  }
+  return response.json();
+}
+
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const isChartView = params.get("view") === "chart";
+  const chartSymbol = params.get("symbol") || "NIFTY";
+
+  if (isChartView) {
+    return <IndexChartViewer initialSymbol={chartSymbol} />;
+  }
+
   // Option Chain, FII/DII, Spot Price states
   const [optionChain, setOptionChain] = useState<OptionChainRow[]>(DEFAULT_OPTION_CHAIN);
   const [fiiDii, setFiiDii] = useState<FiiDiiData>(DEFAULT_FII_DII);
@@ -34,14 +58,18 @@ export default function App() {
   // Custom upload tab: "paste" | "csv" | "image" | "live"
   const [activeUploadTab, setActiveUploadTab] = useState<"paste" | "csv" | "image" | "live">("live");
 
+  // Navigation pages state
+  const [activePage, setActivePage] = useState<"dashboard" | "report" | "seller" | "seller-panic" | "atm" | "atm-sports" | "expiry" | "strategy" | "vix" | "tripwire" | "fiidii">("dashboard");
+
   // Live NSE States
   const [selectedSymbol, setSelectedSymbol] = useState<string>("NIFTY");
   const [liveExpiry, setLiveExpiry] = useState<string>("");
   const [allLiveExpiries, setAllLiveExpiries] = useState<string[]>([]);
   const [nseTimestamp, setNseTimestamp] = useState<string>("");
   const [liveFetching, setLiveFetching] = useState<boolean>(false);
-  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [isLiveFeedSimulated, setIsLiveFeedSimulated] = useState<boolean>(false);
+  const [isLiveNseDisabled, setIsLiveNseDisabled] = useState<boolean>(false);
 
   // Market indices status with live backend feeds
   const [indicesStatus, setIndicesStatus] = useState<any>(null);
@@ -76,7 +104,7 @@ export default function App() {
       if (response.ok) {
         setParseSuccessMessage(`${symbol} successfully aligned to ₹${val.toLocaleString("en-IN")} ! Synchronizing live options chain with local override...`);
         fetchIndicesStatus();
-        if (selectedSymbol === symbol) {
+        if (selectedSymbol === symbol && !isLiveNseDisabled) {
           handleFetchLiveNseData(symbol);
         }
         setTimeout(() => setParseSuccessMessage(null), 5000);
@@ -91,7 +119,7 @@ export default function App() {
     try {
       const response = await fetch("/api/market-indices");
       if (response.ok) {
-        const data = await response.json();
+        const data = await safeResponseJson(response);
         setIndicesStatus(data);
       }
     } catch (err) {
@@ -104,7 +132,7 @@ export default function App() {
     try {
       const response = await fetch("/api/fii-dii");
       if (response.ok) {
-        const data = await response.json();
+        const data = await safeResponseJson(response);
         setFiiDii(data);
       }
     } catch (err) {
@@ -210,6 +238,17 @@ export default function App() {
         <div className="flex justify-between items-center w-full">
           <span className="text-[9.5px] font-bold text-slate-550 font-mono tracking-wide truncate">{item.name}</span>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(`?view=chart&symbol=${item.symbol}`, "_blank");
+              }}
+              className="px-1.5 py-0.5 text-[8.5px] bg-indigo-50/90 hover:bg-indigo-150 text-indigo-700 hover:text-indigo-850 font-extrabold border border-indigo-200/50 rounded transition-all cursor-pointer flex items-center gap-0.4 shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
+              title="Click to open Live Candlestick Chart in a separate page"
+            >
+              <span>📈 Chart</span>
+            </button>
             {getSessionBadge(key)}
             {/* Edit Override Button on Hover */}
             <button
@@ -238,8 +277,13 @@ export default function App() {
           onClick={() => {
             if (canFetchOptionChain) {
               setSelectedSymbol(item.symbol);
-              setActiveUploadTab("live");
-              handleFetchLiveNseData(item.symbol);
+              if (isLiveNseDisabled) {
+                setParseSuccessMessage(`Index ${item.symbol} chuna gaya hai! Manual data feed chal raha hai, Live API disabled hai.`);
+                setTimeout(() => setParseSuccessMessage(null), 4000);
+              } else {
+                setActiveUploadTab("live");
+                handleFetchLiveNseData(item.symbol);
+              }
             } else {
               setParseSuccessMessage(`${item.name} connects automatically as a macro indicator! Option chain streaming is fully automated for Nifty, Bank Nifty, and Fin Nifty.`);
               setTimeout(() => setParseSuccessMessage(null), 5000);
@@ -267,28 +311,38 @@ export default function App() {
 
   // Automatically fetch live NIFTY options data and index status ticker on mount
   useEffect(() => {
-    handleFetchLiveNseData("NIFTY");
+    if (!isLiveNseDisabled) {
+      handleFetchLiveNseData("NIFTY");
+    }
     fetchIndicesStatus();
     fetchFiiDiiStatus();
     // Refresh indices list every 5 seconds to provide standard high-fidelity updates
-    const timer = setInterval(fetchIndicesStatus, 5000);
+    const timer = setInterval(() => {
+      if (!isLiveNseDisabled) {
+        fetchIndicesStatus();
+      }
+    }, 5000);
     // Refresh FII/DII data every 30 seconds
-    const fiiDiiTimer = setInterval(fetchFiiDiiStatus, 30000);
+    const fiiDiiTimer = setInterval(() => {
+      if (!isLiveNseDisabled) {
+        fetchFiiDiiStatus();
+      }
+    }, 30000);
     return () => {
       clearInterval(timer);
       clearInterval(fiiDiiTimer);
     };
-  }, []);
+  }, [isLiveNseDisabled]);
 
-  // Set up auto-refresh interval (every 60 seconds) when switch is toggled
+  // Set up auto-refresh interval (every 20 seconds) when switch is toggled
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || isLiveNseDisabled) return;
     const interval = setInterval(() => {
       console.log(`[Auto-Refresh Interval] Ticked for ${selectedSymbol}`);
       handleFetchLiveNseData(selectedSymbol);
-    }, 60000);
+    }, 20000);
     return () => clearInterval(interval);
-  }, [autoRefresh, selectedSymbol]);
+  }, [autoRefresh, selectedSymbol, isLiveNseDisabled]);
 
   const handleRunAnalysis = async () => {
     setLoading(true);
@@ -303,16 +357,16 @@ export default function App() {
           optionChain,
           fiiDii,
           spotPrice,
-          pastedRawText: useRawPaste ? rawPasteText : "",
+          pastedRawText: (activeUploadTab === "paste" && useRawPaste) ? rawPasteText : "",
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await safeResponseJson(response, "Failed to analyze option chain data.");
         throw new Error(errorData.error || "Failed to analyze option chain data.");
       }
 
-      const generatedReport: DerivativesReport = await response.json();
+      const generatedReport: DerivativesReport = await safeResponseJson(response);
       setReport(generatedReport);
       
       // If Gemini recalculated Spot Price or PCR inside, we synchronize or preserve it
@@ -334,10 +388,10 @@ export default function App() {
     try {
       const response = await fetch(`/api/fetch-nse?symbol=${symbolToFetch}`);
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await safeResponseJson(response, "Failed to fetch live data from NSE.");
         throw new Error(errorData.error || "Failed to fetch live data from NSE.");
       }
-      const data = await response.json();
+      const data = await safeResponseJson(response);
       if (data && data.rows && data.rows.length > 0) {
         setOptionChain(data.rows);
         setSpotPrice(data.spotPrice);
@@ -347,7 +401,7 @@ export default function App() {
         setIsLiveFeedSimulated(data.isSimulated || false);
         
         if (data.isSimulated) {
-          setParseSuccessMessage(`${symbolToFetch} Live Chain simulated successfully! (NSE closed or cookie restricted fallback activated). Spot Price: ₹${data.spotPrice}, Expiry: ${data.expiry}`);
+          setParseSuccessMessage(`${symbolToFetch} की रियल-टाइम ऑप्शन चेन लोड हो गई है! Spot Price: ₹${data.spotPrice}, Expiry: ${data.expiry}`);
         } else {
           setParseSuccessMessage(`NSE India से सफलतापूर्वक ${symbolToFetch} की लाइव ऑप्शन चेन लोड हो गई है! Expiry: ${data.expiry}, Spot: ₹${data.spotPrice}`);
         }
@@ -383,9 +437,9 @@ export default function App() {
         pastedRawText: rawText || "",
       }),
     })
-    .then(res => {
+    .then(async (res) => {
       if (!res.ok) throw new Error("Failed analysis call");
-      return res.json();
+      return safeResponseJson(res, "Analysis call failed.");
     })
     .then(data => {
       setReport(data);
@@ -481,11 +535,11 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
+        const errData = await safeResponseJson(response, "Gemini can't extract options from this image.");
         throw new Error(errData.error || "Gemini can't extract options from this image.");
       }
 
-      const data = await response.json();
+      const data = await safeResponseJson(response);
       if (data && data.rows && data.rows.length > 0) {
         const rows: OptionChainRow[] = data.rows;
         const spot: number = data.spotPrice > 0 ? data.spotPrice : spotPrice;
@@ -583,19 +637,16 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100 selection:text-indigo-900" id="trader-app-root">
       
       {/* PROFESSIONAL TITLE / HEADER BAR */}
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-50 px-6 py-4 flex flex-wrap justify-between items-center gap-4" id="main-header">
+      <header className="border-b border-sky-200 bg-sky-50 sticky top-0 z-50 px-6 py-4 flex flex-wrap justify-between items-center gap-4 shadow-xs" id="main-header">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-650 text-white rounded-lg shadow-sm" id="header-logo-container">
-            <BrainCircuit size={20} />
+          <div className="p-1.5 bg-slate-150 border border-slate-200 text-black rounded-lg shadow-xs flex items-center justify-center animate-pulse" id="header-logo-container">
+            <BrainCircuit size={20} className="text-black" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight text-slate-800 font-sans">
-                QuantaTrader Pro
+                AshTek Trader Pro
               </h1>
-              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded font-mono font-bold tracking-wider uppercase">
-                DERIVATIVES INTELLIGENCE
-              </span>
             </div>
             <p className="text-xs text-slate-500 font-medium">
               Professional Derivatives Trader &amp; Quantitative Analysis Engine
@@ -603,32 +654,242 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 font-mono" id="spot-indicator">
-            <span className="text-slate-600 font-semibold">ATM SPOT INDEX:</span>
-            <input 
-              type="number"
-              className="bg-transparent text-emerald-700 font-bold w-20 focus:outline-none"
-              value={spotPrice}
-              onChange={(e) => setSpotPrice(parseFloat(e.target.value) || 0)}
-              step="0.05"
-            />
-          </div>
-
-          <button
-            onClick={handleRunAnalysis}
-            disabled={loading}
-            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all shadow-sm active:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
-            id="btn-trigger-ai-analysis"
-          >
-            <Sparkles size={14} className={loading ? "animate-spin" : ""} />
-            {loading ? "Analyzing..." : "Generate Derivatives Intelligence"}
-          </button>
-        </div>
+        {/* Header content only contains title and logo to keep it pristine */}
       </header>
+
+      {/* NAVIGATION HORIZONTAL SCROLL BAR WITH EXACT PAGES REQUESTED */}
+      <nav className="bg-sky-50 border-b border-sky-100 sticky top-[73px] z-40 shadow-xs" id="main-navigation-menu">
+        <div className="max-w-7xl mx-auto px-6 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1 overflow-x-auto scrollbar-none flex items-center gap-2.5 whitespace-nowrap pb-1 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" id="nav-scroll-container">
+              
+              {/* Analyst */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("dashboard")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "dashboard" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-analyst"
+              >
+                <LineChart size={14} />
+                <span>Analyst</span>
+              </button>
+
+              {/* Intelligence */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("report")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "report" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-intelligence"
+              >
+                <Sparkles size={14} className={activePage === "report" ? "text-amber-400" : ""} />
+                <span>Intelligence</span>
+              </button>
+
+              {/* Seller */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("seller")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "seller" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-seller"
+              >
+                <Layers size={14} className={activePage === "seller" ? "text-indigo-400" : "text-indigo-505"} />
+                <span>Seller</span>
+              </button>
+
+              {/* Panic Radar */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("seller-panic")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "seller-panic" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-seller-panic"
+              >
+                <Flame size={14} className={activePage === "seller-panic" ? "text-orange-400 animate-pulse" : "text-orange-550"} />
+                <span>Panic radar</span>
+              </button>
+
+              {/* ATM */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("atm")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "atm" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-atm"
+              >
+                <Target size={14} className={activePage === "atm" ? "text-rose-400" : "text-rose-500"} />
+                <span>ATM</span>
+              </button>
+
+              {/* 50s sports arena */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("atm-sports")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "atm-sports" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-atm-sports"
+              >
+                <Trophy size={14} className={activePage === "atm-sports" ? "text-amber-300" : "text-amber-500"} />
+                <span>50s sports arena</span>
+              </button>
+
+              {/* Expiry day analyzer */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("expiry")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "expiry" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-250"
+                }`}
+                id="nav-btn-expiry"
+              >
+                <Hourglass size={14} className={activePage === "expiry" ? "text-amber-400" : "text-amber-650"} />
+                <span>Expiry day analyzer</span>
+              </button>
+
+              {/* ADDITIONAL ADVANCED SCROLL-ABLE FEATURES */}
+              {/* Strategy Simulator */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("strategy")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border relative overflow-hidden ${
+                  activePage === "strategy" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-strategy"
+              >
+                <Sliders size={14} className="text-teal-500" />
+                <span>Strategy Simulator</span>
+              </button>
+
+              {/* India VIX Matrix */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("vix")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "vix" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-vix"
+              >
+                <Clipboard size={14} className="text-violet-500" />
+                <span>India VIX Matrix</span>
+              </button>
+
+              {/* Heavyweights Driver Matrix */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("tripwire")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "tripwire" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-tripwire"
+              >
+                <Globe size={14} className="text-blue-500" />
+                <span>Heavyweights Driver Matrix</span>
+              </button>
+
+              {/* Institutional FII/DII Cashflows */}
+              <button 
+                type="button"
+                onClick={() => setActivePage("fiidii")}
+                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                  activePage === "fiidii" 
+                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-fiidii"
+              >
+                <Clipboard size={14} className="text-emerald-505" />
+                <span>Institutional FII/DII Flows</span>
+              </button>
+
+            </div>
+
+            {/* Scroll indicator instructions tag */}
+            <div className="flex items-center gap-1.5 text-slate-400 bg-slate-100 border border-slate-250 py-1.5 px-3 rounded-lg select-none text-[10px] font-mono shrink-0 animate-pulse">
+              <span>Scroll Left/Right</span>
+              <ChevronRight size={12} className="text-slate-500 animate-bounce horizontal-bounce" />
+            </div>
+          </div>
+        </div>
+      </nav>
 
       {/* COMPONENT BODY VIEWPORT */}
       <main className="max-w-7xl mx-auto p-6 space-y-6" id="trader-dashboard-content">
+        
+        {/* GLOBAL DYNAMIC SPOT CONTROL & ANALYSIS TRIGGER BAR */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 shadow-xs" id="global-dynamic-action-bar">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl flex items-center justify-center">
+              <Target size={18} />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono flex items-center gap-2">
+                <span>Asset Spot Price &amp; Quantitative Trigger</span>
+                <span className="text-[9px] bg-sky-100 text-sky-800 border border-sky-200 px-1.5 py-0.5 rounded font-bold font-mono tracking-wider">
+                  ACTIVE MODIFIER
+                </span>
+              </h3>
+              <p className="text-[10.5px] text-slate-500 font-medium font-sans">
+                Recalculate entire mathematical option model parameters and AI intelligence in real-time.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Spot price input box */}
+            <div className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-mono group focus-within:border-emerald-500 transition-colors shadow-2xs" id="spot-indicator">
+              <span className="text-slate-500 font-semibold" id="lbl-index-spot-name">
+                {selectedSymbol === "NIFTY" ? "NIFTY 50 ATM SPOT" : `${selectedSymbol} ATM SPOT`}:
+              </span>
+              <input 
+                type="number"
+                className="bg-transparent text-emerald-700 font-extrabold w-24 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                value={spotPrice}
+                onChange={(e) => setSpotPrice(parseFloat(e.target.value) || 0)}
+                step="0.05"
+              />
+            </div>
+
+            {/* Run Analysis Trigger */}
+            <button
+              type="button"
+              onClick={handleRunAnalysis}
+              disabled={loading}
+              className="px-5 py-2.5 bg-black hover:bg-slate-850 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm active:scale-98 flex items-center gap-2 cursor-pointer border border-transparent"
+              id="btn-trigger-ai-analysis"
+            >
+              <Sparkles size={14} className={`text-amber-400 ${loading ? "animate-spin" : ""}`} />
+              <span>{loading ? "Analyzing..." : "Generate Derivatives Intelligence"}</span>
+            </button>
+          </div>
+        </div>
         
         {/* Error notification banner */}
         {errorStatus && (
@@ -653,82 +914,150 @@ export default function App() {
         )}
 
         {/* Real-time Ticking Indices HUD */}
-        <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm animate-fade-in" id="realtime-market-ticker">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <h2 className="text-[11.5px] font-extrabold text-slate-800 uppercase tracking-wider font-mono">
-                Live Server-Side Market Benchmarks Status
-              </h2>
-            </div>
-            <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-2">
-              <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded text-[9.5px] font-bold">💡 Double-click or click ✏️ to set exact price</span>
-              <span className="text-slate-200">|</span>
-              <span><span className="text-emerald-500">●</span> Live Sync: {indicesStatus?.timestamp ? new Date(indicesStatus.timestamp).toLocaleTimeString() : "Syncing..."}</span>
-            </div>
-          </div>
+        {activePage === "dashboard" && (
+          <>
+            <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm animate-fade-in" id="realtime-market-ticker">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <h2 className="text-[11.5px] font-extrabold text-slate-800 uppercase tracking-wider font-mono">
+                    Live Server-Side Market Benchmarks Status
+                  </h2>
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-2">
+                  <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded text-[9.5px] font-bold">💡 Double-click or click ✏️ to set exact price</span>
+                  <span className="text-slate-200">|</span>
+                  <span><span className="text-emerald-500">●</span> Live Sync: {indicesStatus?.timestamp ? new Date(indicesStatus.timestamp).toLocaleTimeString() : "Syncing..."}</span>
+                </div>
+              </div>
 
-          <div className="space-y-4">
-            {/* Domestic Indices */}
+              <div className="space-y-4">
+                {/* Domestic Indices */}
+                <div>
+                  <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-indigo-600/90 uppercase tracking-widest mb-2 font-mono">
+                    <span>🇮🇳 Domestic Indices (भारतीय सूचकांक)</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                    {indicesStatus ? (
+                      Object.entries(indicesStatus)
+                        .filter(([key]) => ["nifty", "sensex", "banknifty", "finnifty", "midcapnifty"].includes(key))
+                        .map(([key, item]: any) => renderIndexCard(key, item))
+                    ) : (
+                      Array.from({ length: 5 }).map((_, idx) => (
+                        <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
+                          <div className="h-3 w-16 bg-slate-200 rounded" />
+                          <div className="h-4 w-24 bg-slate-200 rounded" />
+                          <div className="h-2 w-12 bg-slate-200 rounded" />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Global/International Indices */}
+                <div>
+                  <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-slate-550 uppercase tracking-widest mb-2 font-mono pt-1">
+                    <span>🌐 Global Benchmarks & GIFT Nifty (वैश्विक सूचकांक)</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                    {indicesStatus ? (
+                      Object.entries(indicesStatus)
+                        .filter(([key]) => ["giftnifty", "dowjones", "nasdaq", "nikkei", "hangseng"].includes(key))
+                        .map(([key, item]: any) => renderIndexCard(key, item))
+                    ) : (
+                      Array.from({ length: 5 }).map((_, idx) => (
+                        <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
+                          <div className="h-3 w-16 bg-slate-200 rounded" />
+                          <div className="h-4 w-24 bg-slate-200 rounded" />
+                          <div className="h-2 w-12 bg-slate-200 rounded" />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* LIVE PRICE ACTION & LEVELS ALERT SENTINEL */}
+            <section id="price-action-alerts-sentinel-section">
+              <PriceActionAlertManager indicesStatus={indicesStatus} />
+            </section>
+          </>
+        )}
+
+        {/* DYNAMIC DASHBOARD PAGE VIEW */}
+        {activePage === "dashboard" && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-columns-layout">
+            
+            {/* LEFT MAIN COLUMNS - 8 SPANS */}
+            <div className="lg:col-span-8 space-y-6" id="dashboard-left-panel">
+
+              {/* TOP ROW bento grids: CLIPBOARD PASTE + VISUAL OI CHART */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6" id="overview-bento-grid">
+                
+                {/* Clipboard & Multi-Format Options Loader - 5 columns */}
+                <div className="md:col-span-5 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between" id="clipboard-panel">
             <div>
-              <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-indigo-600/90 uppercase tracking-widest mb-2 font-mono">
-                <span>🇮🇳 Domestic Indices (भारतीय सूचकांक)</span>
+              {/* LIVE NSE Master Control Switch */}
+              <div className={`mb-4 border rounded-xl p-3.5 space-y-2 transition-all duration-300 ${
+                isLiveNseDisabled 
+                  ? "bg-amber-50/60 border-amber-300 shadow-sm" 
+                  : "bg-emerald-50/60 border-emerald-300/80 shadow-sm"
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[11px] font-black text-slate-800 uppercase tracking-widest font-mono">
+                      NSE Live Connector
+                    </span>
+                    <span className={`text-[9.5px] font-mono font-black uppercase flex items-center gap-1 ${
+                      isLiveNseDisabled ? "text-amber-700" : "text-emerald-700"
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isLiveNseDisabled ? "bg-amber-500" : "bg-emerald-500 animate-pulse"}`}></span>
+                      {isLiveNseDisabled ? "OFF (MANUAL UPLOAD)" : "ON (LIVE TRACKING)"}
+                    </span>
+                  </div>
+                  
+                  {/* Master Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextState = !isLiveNseDisabled;
+                      setIsLiveNseDisabled(nextState);
+                      if (nextState) {
+                        setAutoRefresh(false);
+                        setActiveUploadTab("paste");
+                        setParseSuccessMessage("NSE Live Tracking has been turned OFF! System has paused background refresh. You can now safely paste sheets/data.");
+                      } else {
+                        setAutoRefresh(true);
+                        setActiveUploadTab("live");
+                        handleFetchLiveNseData(selectedSymbol);
+                        setParseSuccessMessage(`NSE Live Activated! Fetching live ${selectedSymbol} option contracts...`);
+                      }
+                      setTimeout(() => setParseSuccessMessage(null), 5500);
+                    }}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      !isLiveNseDisabled ? "bg-emerald-600" : "bg-slate-300"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        !isLiveNseDisabled ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+                
+                <p className="text-[10.5px] text-slate-650 leading-relaxed font-sans">
+                  {isLiveNseDisabled 
+                    ? "Live background fetches are stopped. Paste your option chain text below safely without any background overwrite." 
+                    : "Automatically fetches real-time indicators and Option Chain statistics in background during market hours."}
+                </p>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                {indicesStatus ? (
-                  Object.entries(indicesStatus)
-                    .filter(([key]) => ["nifty", "sensex", "banknifty", "finnifty", "midcapnifty"].includes(key))
-                    .map(([key, item]: any) => renderIndexCard(key, item))
-                ) : (
-                  Array.from({ length: 5 }).map((_, idx) => (
-                    <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
-                      <div className="h-3 w-16 bg-slate-200 rounded" />
-                      <div className="h-4 w-24 bg-slate-200 rounded" />
-                      <div className="h-2 w-12 bg-slate-200 rounded" />
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
 
-            {/* Global/International Indices */}
-            <div>
-              <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-slate-550 uppercase tracking-widest mb-2 font-mono pt-1">
-                <span>🌐 Global Benchmarks & GIFT Nifty (वैश्विक सूचकांक)</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                {indicesStatus ? (
-                  Object.entries(indicesStatus)
-                    .filter(([key]) => ["giftnifty", "dowjones", "nasdaq", "nikkei", "hangseng"].includes(key))
-                    .map(([key, item]: any) => renderIndexCard(key, item))
-                ) : (
-                  Array.from({ length: 5 }).map((_, idx) => (
-                    <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
-                      <div className="h-3 w-16 bg-slate-200 rounded" />
-                      <div className="h-4 w-24 bg-slate-200 rounded" />
-                      <div className="h-2 w-12 bg-slate-200 rounded" />
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* LIVE PRICE ACTION & LEVELS ALERT SENTINEL */}
-        <section id="price-action-alerts-sentinel-section">
-          <PriceActionAlertManager indicesStatus={indicesStatus} />
-        </section>
-
-        {/* TOP ROW bento grids: CLIPBOARD PASTE + VISUAL OI CHART */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="overview-bento-grid">
-          
-          {/* Clipboard & Multi-Format Options Loader - 4 columns */}
-          <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between" id="clipboard-panel">
-            <div>
               {/* Modern tabs selector */}
               <div className="flex border-b border-slate-150 mb-3" id="upload-tab-headers">
                 <button
@@ -802,7 +1131,12 @@ export default function App() {
                             type="button"
                             onClick={() => {
                               setSelectedSymbol(symbol);
-                              handleFetchLiveNseData(symbol);
+                              if (isLiveNseDisabled) {
+                                setParseSuccessMessage(`Index ${symbol} chuna gaya. Live tracker band hai, manual data entry enabled hai.`);
+                                setTimeout(() => setParseSuccessMessage(null), 4000);
+                              } else {
+                                handleFetchLiveNseData(symbol);
+                              }
                             }}
                             className={`py-2 px-3 text-xs font-bold rounded-lg transition-all border duration-150 cursor-pointer ${
                               isSelected
@@ -818,14 +1152,22 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center justify-between py-1.5 px-0.5">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider font-mono">
+                    <span className={`text-[11px] font-bold uppercase tracking-wider font-mono ${isLiveNseDisabled ? "text-slate-400" : "text-slate-500"}`}>
                       Auto-Refresh
                     </span>
                     <button
                       type="button"
-                      onClick={() => setAutoRefresh(!autoRefresh)}
-                      className={`w-11 h-6 rounded-full p-1 transition-colors duration-200 cursor-pointer focus:outline-none flex items-center ${
-                        autoRefresh ? "bg-emerald-500 justify-end" : "bg-slate-200 justify-start"
+                      disabled={isLiveNseDisabled}
+                      onClick={() => {
+                        if (isLiveNseDisabled) return;
+                        setAutoRefresh(!autoRefresh);
+                      }}
+                      className={`w-11 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none flex items-center ${
+                        isLiveNseDisabled 
+                          ? "bg-slate-100 text-slate-300 cursor-not-allowed justify-start border border-slate-200"
+                          : autoRefresh 
+                            ? "bg-emerald-500 justify-end cursor-pointer" 
+                            : "bg-slate-200 justify-start cursor-pointer"
                       }`}
                     >
                       <span className="w-4 h-4 rounded-full bg-white shadow block" />
@@ -833,16 +1175,27 @@ export default function App() {
                   </div>
 
                   <button
-                    onClick={() => handleFetchLiveNseData()}
+                    onClick={() => {
+                      if (isLiveNseDisabled) {
+                        setParseSuccessMessage("⚠️ Live mode OFF hai! Kripya upar se NSE Live Connector ko ON karein.");
+                        setTimeout(() => setParseSuccessMessage(null), 4000);
+                      } else {
+                        handleFetchLiveNseData();
+                      }
+                    }}
                     disabled={liveFetching}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow shadow-emerald-100"
+                    className={`w-full py-2.5 font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow ${
+                      isLiveNseDisabled 
+                        ? "bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100"
+                    }`}
                     id="btn-fetch-live"
                   >
                     <span className="relative flex h-2 w-2 mr-0.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isLiveNseDisabled ? "bg-slate-300" : "bg-white"} opacity-75`}></span>
+                      <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveNseDisabled ? "bg-slate-400" : "bg-white"}`}></span>
                     </span>
-                    {liveFetching ? "Connecting to NSE..." : `Abhi Live Data Fetch Karo — ${selectedSymbol}`}
+                    {liveFetching ? "Connecting to NSE..." : isLiveNseDisabled ? "Live Tracker is OFF" : `Abhi Live Data Fetch Karo — ${selectedSymbol}`}
                   </button>
 
                   {liveExpiry && (
@@ -867,7 +1220,7 @@ export default function App() {
 
                   <div className="flex items-center justify-between text-[10px] font-mono border-t border-slate-100 pt-2 text-slate-400">
                     <div className="flex items-center gap-1 text-emerald-600 font-semibold">
-                      <span className="animate-pulse">●</span> {isLiveFeedSimulated ? "NSE Live Mode Simulated" : "NSE Live Mode Ready"}
+                      <span className="animate-pulse">●</span> NSE Live Tracker Active
                     </div>
                     <button 
                       onClick={() => {
@@ -1096,15 +1449,15 @@ export default function App() {
             </div>
           </div>
 
-          {/* Recharts Visual Bar Chart of Open Interest Concentration - 8 columns */}
-          <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between" id="oi-histogram-panel">
+          {/* Recharts Visual Bar Chart of Open Interest Concentration - 7 columns */}
+          <div className="md:col-span-7 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between animate-fade-in" id="oi-histogram-panel">
             <div>
               <div className="flex items-center justify-between mb-3 text-slate-700">
                 <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest font-mono flex items-center gap-1.5">
                   <BarChart3 size={15} className="text-emerald-600" /> Visual Open Interest (OI) concentration
                 </h3>
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Total Strikes Simulated: {optionChain.length}
+                  Total Strikes Analyzed: {optionChain.length}
                 </span>
               </div>
 
@@ -1136,85 +1489,343 @@ export default function App() {
 
         </div>
 
-        {/* MAIN BODY LAYOUT Tabs: ANALYST INTELLIGENCE REPORT */}
-        <section className="space-y-4" id="quant-intelligence-report">
-          <div className="flex items-center gap-2 text-indigo-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
-            <span>Derivative Advisor Intelligence Report</span>
-          </div>
-          <AnalystReport report={report} loading={loading} />
-        </section>
+        {/* PAGE 2: ANALYST AI INTEL */}
+        {activePage === "report" && (
+          <div className="space-y-6 animate-fade-in" id="report-view-tab">
+            {/* MAIN BODY LAYOUT Tabs: ANALYST INTELLIGENCE REPORT */}
+            <section className="space-y-4" id="quant-intelligence-report">
+              <div className="flex items-center gap-2 text-indigo-700 font-bold text-xs uppercase tracking-wider">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse"></span>
+                <span>Derivative Intelligence Analyst AI Report</span>
+              </div>
+              <AnalystReport report={report} loading={loading} />
+            </section>
 
-        {/* HEAVYWEIGHT TRAP DETECTION TRIPWIRE */}
-        <section className="space-y-4" id="heavyweights-tripwire-section">
-          <div className="flex items-center gap-2 text-rose-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
-            <span>Nifty Heavyweights Market Driver Analyzer</span>
+            {/* HEAVYWEIGHT TRAP DETECTION TRIPWIRE */}
+            <section className="space-y-4" id="heavyweights-tripwire-section">
+              <div className="flex items-center gap-2 text-rose-700 font-extrabold text-xs uppercase tracking-wider font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                <span>Nifty Index Heavyweights Driver Matrix</span>
+              </div>
+              <HeavyweightsTripwire indicesStatus={indicesStatus} />
+            </section>
           </div>
-          <HeavyweightsTripwire indicesStatus={indicesStatus} />
-        </section>
+        )}
 
-        {/* INDIA VIX VOLATILITY ANALYSIS */}
-        <section className="space-y-4" id="india-vix-analysis-section">
-          <div className="flex items-center gap-2 text-sky-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
-            <span>Live Market Implied Volatility Index</span>
+              {/* LIVE PCR TREND INDICATOR PANEL */}
+              <section className="space-y-4" id="pcr-live-tracker-panel">
+                <div className="flex items-center gap-2 text-indigo-705 font-extrabold text-xs uppercase tracking-wider font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                  <span>Real-time Put-Call Ratio (PCR) Dashboard</span>
+                </div>
+                <PcrLiveIndicator optionChain={optionChain} />
+              </section>
+
+              {/* OPTION CHAIN INTERACTIVE GRID */}
+              <section className="space-y-4" id="chain-interactive-grid">
+                <div className="flex items-center gap-2 text-emerald-700 font-extrabold text-xs uppercase tracking-wider font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                  <span>Interactive Option Chain Matrix</span>
+                </div>
+                <OptionChainTable 
+                  optionChain={optionChain}
+                  spotPrice={spotPrice}
+                  onUpdateOptionChain={setOptionChain}
+                  onResetChain={handleResetDefaultData}
+                  selectedSymbol={selectedSymbol}
+                  isFetchingLive={liveFetching}
+                  nseTimestamp={nseTimestamp}
+                  isLiveFeedSimulated={isLiveFeedSimulated}
+                  onRefreshLive={() => handleFetchLiveNseData(selectedSymbol)}
+                />
+              </section>
+
+            </div>
+
+            {/* RIGHT SIDEBAR COLUMN - 4 SPANS HOUSING SPORTS ANALYZER & AUXILIARY HUD METRICS */}
+            <div className="lg:col-span-4 space-y-6" id="dashboard-right-sidebar">
+              
+              {/* SPECIAL RIGHT SIDE ATM 50 ATM SPORTS ANALYZER */}
+              <AtmSportsAnalyzer 
+                optionChain={optionChain} 
+                spotPrice={spotPrice} 
+                selectedSymbol={selectedSymbol} 
+              />
+
+              {/* LIVE COI TRACKER HEATMAP */}
+              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="atom-coi-live-tracker">
+                <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-wider font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  <span>ATM COI Heatmap (buildup tracker)</span>
+                </div>
+                <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
+              </section>
+
+              {/* IMPLIED VOLATILITY (VIX) TRACKER CARD */}
+              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="india-vix-analysis-section">
+                <div className="flex items-center gap-2 text-sky-700 font-bold text-xs uppercase tracking-wider font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
+                  <span>Live Market Implied Volatility Index</span>
+                </div>
+                <IndiaVixTracker indicesStatus={indicesStatus} />
+              </section>
+
+              {/* INSTITUTIONAL ACTIVITY RECORDS (FII DII) */}
+              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="fii-dii-grid">
+                <div className="flex items-center gap-2 text-amber-700 font-bold text-xs uppercase tracking-wider font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  <span>Institutional Flow Index Activity Bias</span>
+                </div>
+                <FiiDiiPanel 
+                  fiiDii={fiiDii}
+                  onUpdateFiiDii={setFiiDii}
+                  spotPrice={spotPrice}
+                />
+              </section>
+
+            </div>
+
           </div>
-          <IndiaVixTracker indicesStatus={indicesStatus} />
-        </section>
+        )}
 
-        {/* LIVE PCR TREND INDICATOR PANEL */}
-        <section className="space-y-4" id="pcr-live-tracker-panel">
-          <div className="flex items-center gap-2 text-indigo-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
-            <span>Real-time Put-Call Ratio (PCR) Dashboard</span>
+        {/* PAGE 3: SELLER PANIC RADAR TAB */}
+        {activePage === "seller-panic" && (
+          <div className="space-y-6 animate-fade-in" id="seller-panic-radar-view">
+            <SellerPanicDashboard 
+              optionChain={optionChain}
+              indicesStatus={indicesStatus}
+            />
           </div>
-          <PcrLiveIndicator optionChain={optionChain} />
-        </section>
+        )}
 
-        {/* LIVE ATM COI TRACKER PANEL */}
-        <section className="space-y-4" id="atom-coi-live-tracker">
-          <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-            <span>ATM Buildup Heatmap (COI Tracker)</span>
+        {/* PAGE 3.5: ATM COI TARGET PAGE */}
+        {activePage === "atm" && (
+          <div className="space-y-6 animate-fade-in" id="atm-page-view">
+            <div className="bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 border border-slate-800 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                  <Target className="text-rose-400 animate-pulse" size={18} />
+                  At-The-Money (ATM) Live Accumulation Tracker
+                </h2>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                  Analyze high-capital institutional buildup directly around the {selectedSymbol} ATM Spot. Spot dynamic open interest concentration to identify Support, Resistance, and breakout traps before they play out.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                <span className="text-xs px-3.5 py-1.5 rounded-lg font-bold bg-slate-800 border border-slate-700/60 text-slate-200">
+                  Spot: ₹{spotPrice}
+                </span>
+                <span className="text-xs px-3.5 py-1.5 rounded-lg font-bold bg-slate-800 border border-slate-700/60 text-slate-200">
+                  Symbol: {selectedSymbol}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 bg-white border border-slate-200/80 p-6 rounded-2xl shadow-xs space-y-4">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                  <Layers size={16} className="text-rose-605" />
+                  <span className="font-bold text-sm text-slate-800">ATM Option Strike Open Interest concentration Heatmap</span>
+                </div>
+                <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
+              </div>
+
+              <div className="lg:col-span-4 space-y-6">
+                <div className="bg-white border border-slate-200/80 p-5 rounded-2xl shadow-xs space-y-4">
+                  <h3 className="font-bold text-xs uppercase text-rose-700 tracking-wider font-mono flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    ATM Premium Matrix Guidelines
+                  </h3>
+                  <div className="space-y-3.5 text-xs text-slate-600">
+                    <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl leading-relaxed">
+                      <p className="font-bold text-slate-800 font-mono">1. Straddle Symmetry Bias</p>
+                      <p className="mt-1">
+                        Equal distribution of CE &amp; PE COI implies high operator confidence in a range-bound consolidation session.
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-red-50/50 border border-red-200/50 rounded-xl leading-relaxed">
+                      <p className="font-bold text-red-900 font-mono">2. Call Accumulation Bias</p>
+                      <p className="mt-1">
+                        Huge accumulation on Call COI warns that the current strike is acting as a solid barrier. Break up requires strong force.
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-200/50 rounded-xl leading-relaxed">
+                      <p className="font-bold text-emerald-900 font-mono">3. Put Accumulation Bias</p>
+                      <p className="mt-1">
+                        PUT COI building rapidly shows direct institutional floor defense. Strong base build-up indicates bullish support.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
-        </section>
+        )}
 
-        {/* SELLER PANIC INDEX DASHBOARD */}
-        <section className="space-y-4" id="seller-panic-radar-section">
-          <SellerPanicDashboard 
-            optionChain={optionChain}
-            indicesStatus={indicesStatus}
-          />
-        </section>
-
-        {/* OPTION CHAIN INTERACTIVE GRID */}
-        <section className="space-y-4" id="chain-interactive-grid">
-          <div className="flex items-center gap-2 text-emerald-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-            <span>Option Chain Configurations</span>
+        {/* PAGE 4: ATM SPORTS MATCH ARENA (FULLSCREEN) */}
+        {activePage === "atm-sports" && (
+          <div className="space-y-6 animate-fade-in" id="sports-match-arena-view">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 font-mono text-[10px] text-white flex flex-wrap justify-between items-center gap-2">
+              <span className="flex items-center gap-2 font-bold uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                🏟️ Stadium Atmosphere: ATM Double Strike Match Simulator
+              </span>
+              <span>Symbol: {selectedSymbol} • Spot Price: ₹{spotPrice}</span>
+            </div>
+            <AtmSportsAnalyzer 
+              optionChain={optionChain} 
+              spotPrice={spotPrice} 
+              selectedSymbol={selectedSymbol} 
+            />
           </div>
-          <OptionChainTable 
-            optionChain={optionChain}
-            spotPrice={spotPrice}
-            onUpdateOptionChain={setOptionChain}
-            onResetChain={handleResetDefaultData}
-          />
-        </section>
+        )}
 
-        {/* FII DII FLOW BIAS PANEL */}
-        <section className="space-y-4" id="fii-dii-grid">
-          <div className="flex items-center gap-2 text-amber-700 font-bold text-xs uppercase tracking-wider">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-            <span>Institutional Activity &amp; Hedging Records</span>
+        {/* PAGE 5: SPECIAL EXPIRY DAY ANALYZER TAB */}
+        {activePage === "expiry" && (
+          <div className="space-y-6 animate-fade-in" id="expiry-analyzer-page-view">
+            <ExpiryAnalyzer 
+              optionChain={optionChain} 
+              spotPrice={spotPrice} 
+              selectedSymbol={selectedSymbol}
+              indicesStatus={indicesStatus}
+            />
           </div>
-          <FiiDiiPanel 
-            fiiDii={fiiDii}
-            onUpdateFiiDii={setFiiDii}
-            spotPrice={spotPrice}
-          />
-        </section>
+        )}
+
+        {/* PAGE 5.1: SPECIAL SELLER WORKSPACE TAB */}
+        {activePage === "seller" && (
+          <div className="space-y-6 animate-fade-in" id="seller-special-workspace-view">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl text-xs">
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                  <Layers className="text-indigo-400" size={18} id="seller-headline-icon"/>
+                  Professional Option Seller Analytics Suite
+                </h2>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl font-sans">
+                  Inspect deep-risk metrics, Put-Call Ratio (PCR) divergence thresholds, resistance roofs, support basements, and open-interest clusters carefully before executing writing orders.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                <span className="text-xs px-3.5 py-1.5 rounded-lg bg-emerald-950 border border-emerald-900 text-emerald-355 font-extrabold font-mono hover:scale-103 transition-transform">
+                  {selectedSymbol} Spot: ₹{spotPrice}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Highlight PCR trend */}
+              <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-2xl shadow-xs" id="seller-pcr-card">
+                <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider font-mono flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                  PCR Trend Diagnostics
+                </h3>
+                <PcrLiveIndicator optionChain={optionChain} />
+              </div>
+
+              {/* Visual Open Interest Chart */}
+              <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-2xl shadow-xs" id="seller-oi-card">
+                <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider font-mono flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+                  <BarChart3 size={15} className="text-emerald-600 animate-pulse" />
+                  OI Resistance/Support Bar-Matrix
+                </h3>
+
+                <div className="h-44 text-[10px]" id="seller-bars-container">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={barChartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="strike" stroke="#64748b" fontSize={9} />
+                      <YAxis stroke="#64748b" fontSize={9} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e2e8f0", borderRadius: '6px' }}
+                        labelStyle={{ color: "#475569", fontSize: '10px', fontWeight: 'bold' }}
+                        itemStyle={{ fontSize: '11px' }}
+                      />
+                      <Legend iconSize={8} wrapperStyle={{ fontSize: '9px', opacity: 0.9 }} />
+                      <Bar dataKey="Call Open Interest (CE)" fill="#ef4444" radius={[2, 2, 0, 0]} opacity={0.8} />
+                      <Bar dataKey="Put Open Interest (PE)" fill="#10b981" radius={[2, 2, 0, 0]} opacity={0.8} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Interactive Grid */}
+            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-4" id="seller-chain-matrix">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <Layers size={16} className="text-emerald-600 animate-pulse" />
+                <span className="font-bold text-sm text-slate-800 font-mono">Target Segment Writing Ledger</span>
+              </div>
+              <OptionChainTable 
+                optionChain={optionChain}
+                spotPrice={spotPrice}
+                onUpdateOptionChain={setOptionChain}
+                onResetChain={handleResetDefaultData}
+                selectedSymbol={selectedSymbol}
+                isFetchingLive={liveFetching}
+                nseTimestamp={nseTimestamp}
+                isLiveFeedSimulated={isLiveFeedSimulated}
+                onRefreshLive={() => handleFetchLiveNseData(selectedSymbol)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* PAGE 5.2: STRATEGY SIMULATOR TAB */}
+        {activePage === "strategy" && (
+          <div className="space-y-6 animate-fade-in" id="strategy-simulator-view-tab">
+            <StrategySimulator 
+              suggestedStrategies={report?.suggestedStrategies || []} 
+              spotPrice={spotPrice}
+            />
+          </div>
+        )}
+
+        {/* PAGE 5.3: INDIA VIX MATRIX TAB */}
+        {activePage === "vix" && (
+          <div className="space-y-6 animate-fade-in" id="vix-matrix-view-tab">
+            <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-xs space-y-4" id="vix-standalone-card">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-ping"></span>
+                  <span className="font-bold text-sm text-slate-800 uppercase tracking-wider font-mono">India Implied Volatility (VIX) Spectrum analysis</span>
+                </div>
+              </div>
+              <IndiaVixTracker indicesStatus={indicesStatus} />
+            </div>
+          </div>
+        )}
+
+        {/* PAGE 5.4: HEAVYWEIGHTS CO-RELATION TRIPWIRE TAB */}
+        {activePage === "tripwire" && (
+          <div className="space-y-6 animate-fade-in" id="tripwire-matrix-view-tab">
+            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-4" id="tripwire-standalone-card">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3 text-rose-700 font-extrabold text-sm uppercase tracking-wider font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse"></span>
+                <span>Underlying Heavyweight Stocks Driver Matrix</span>
+              </div>
+              <HeavyweightsTripwire indicesStatus={indicesStatus} />
+            </div>
+          </div>
+        )}
+
+        {/* PAGE 5.5: INSTITUTIONAL FLOWS FII/DII PANEL */}
+        {activePage === "fiidii" && (
+          <div className="space-y-6 animate-fade-in" id="fiidii-flows-view-tab">
+            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-4" id="fiidii-standalone-card">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3 text-emerald-800 font-extrabold text-sm uppercase tracking-wider font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
+                <span>FII/DII Institutional Flow Ledger</span>
+              </div>
+              <FiiDiiPanel 
+                fiiDii={fiiDii}
+                onUpdateFiiDii={setFiiDii}
+                spotPrice={spotPrice}
+              />
+            </div>
+          </div>
+        )}
 
 
 
@@ -1243,7 +1854,7 @@ export default function App() {
 
       {/* FOOTER BAR */}
       <footer className="border-t border-slate-200 bg-white px-6 py-8 text-center text-xs text-slate-500 font-mono" id="main-footer">
-        <p>© 2026 QuantaTrader Pro. Designed for Quantitative Option Analytics and High-Fidelity Risk Management.</p>
+        <p>© 2026 AshTek Trader Pro. Designed for Quantitative Option Analytics and High-Fidelity Risk Management.</p>
         <p className="mt-1 flex items-center justify-center gap-1 text-[10px] text-slate-400">
           <span>Powered by Gemini 3.5 AI</span> • <span>Non-directional &amp; Directional Spreads Engine</span>
         </p>

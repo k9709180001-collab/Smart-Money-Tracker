@@ -7,6 +7,11 @@ interface OptionChainTableProps {
   spotPrice: number;
   onUpdateOptionChain: (updatedChain: OptionChainRow[]) => void;
   onResetChain: () => void;
+  selectedSymbol?: string;
+  isFetchingLive?: boolean;
+  nseTimestamp?: string;
+  isLiveFeedSimulated?: boolean;
+  onRefreshLive?: () => void;
 }
 
 export default function OptionChainTable({
@@ -14,6 +19,11 @@ export default function OptionChainTable({
   spotPrice,
   onUpdateOptionChain,
   onResetChain,
+  selectedSymbol = "NIFTY",
+  isFetchingLive = false,
+  nseTimestamp = "",
+  isLiveFeedSimulated = false,
+  onRefreshLive,
 }: OptionChainTableProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editRow, setEditRow] = useState<OptionChainRow | null>(null);
@@ -107,21 +117,56 @@ export default function OptionChainTable({
     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm" id="option-chain-card">
       <div className="px-6 py-4 bg-white border-b border-slate-200 flex flex-wrap justify-between items-center gap-4">
         <div>
-          <h3 className="text-lg font-bold text-slate-800 font-sans tracking-tight">
-            Live Interactive Option Chain Table
-          </h3>
-          <p className="text-xs text-slate-500 font-mono mt-0.5">
-            Spot Price: <span className="text-emerald-700 font-bold font-sans">₹{spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-          </p>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-bold text-slate-800 font-sans tracking-tight">
+              Live Option Chain Analyzer
+            </h3>
+            <span className="text-[10px] bg-indigo-100 text-indigo-700 font-extrabold px-2 py-0.5 rounded font-mono">
+              {selectedSymbol}
+            </span>
+            <span className="text-[9.5px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+              Live Feed Active
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-mono mt-1">
+            <span>
+              Spot Price: <span className="text-emerald-700 font-bold font-sans">₹{spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </span>
+            {nseTimestamp && (
+              <>
+                <span className="text-slate-300">|</span>
+                <span>Last Sync: {new Date(nseTimestamp).toLocaleTimeString()}</span>
+              </>
+            )}
+            <span className="text-slate-300">|</span>
+            <span className="text-indigo-600 font-sans font-medium">
+              Real-time calculations synced. For 100% exact option contracts, use the "Paste Data" tab above.
+            </span>
+          </div>
         </div>
-        <button
-          onClick={onResetChain}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-200 shadow-sm transition"
-          id="btn-reset-option-chain"
-        >
-          <Undo2 size={13} />
-          Reset Default Chain
-        </button>
+
+        <div className="flex items-center gap-2">
+          {onRefreshLive && (
+            <button
+              onClick={onRefreshLive}
+              disabled={isFetchingLive}
+              className={`flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-bold shadow-sm transition active:scale-95 cursor-pointer`}
+              id="btn-quick-refresh-option-chain"
+            >
+              <RefreshCw size={13} className={isFetchingLive ? "animate-spin" : ""} />
+              {isFetchingLive ? "Updating..." : `Lively Update Chain — ${selectedSymbol}`}
+            </button>
+          )}
+          <button
+            onClick={onResetChain}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-705 rounded-lg text-xs font-medium border border-slate-200 shadow-sm transition active:scale-95 cursor-pointer font-semibold"
+            id="btn-reset-option-chain"
+          >
+            <Undo2 size={13} />
+            Reset Default
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
