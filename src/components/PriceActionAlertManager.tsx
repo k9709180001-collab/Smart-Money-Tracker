@@ -409,7 +409,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
             onClick={() => { setSoundEnabled(!soundEnabled); playChime("beep"); }}
             title={soundEnabled ? "Mute alert beep" : "Unmute alert beep"}
             className={`p-2 rounded-lg border transition text-xs flex items-center gap-1.5 font-mono ${
-              soundEnabled ? "bg-slate-800 text-emerald-400 border-slate-700" : "bg-slate-950 text-slate-500 border-slate-850"
+              soundEnabled ? "bg-slate-800 text-emerald-400 border-slate-700" : "bg-slate-950 text-slate-500 border-slate-800"
             }`}
           >
             {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
@@ -422,7 +422,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
             onClick={() => { setVoiceVoiceEnabled(!voiceVoiceEnabled); playChime("beep"); }}
             title={voiceVoiceEnabled ? "Mute spoken voice alerts" : "Enable spoken voice alerts"}
             className={`p-2 rounded-lg border transition text-xs flex items-center gap-1.5 font-mono ${
-              voiceVoiceEnabled ? "bg-slate-800 text-sky-400 border-slate-700" : "bg-slate-950 text-slate-500 border-slate-850"
+              voiceVoiceEnabled ? "bg-slate-800 text-sky-400 border-slate-700" : "bg-slate-950 text-slate-500 border-slate-800"
             }`}
           >
             <Volume2 size={13} className="text-sky-300 animate-pulse" />
@@ -441,7 +441,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
           {/* Wizard toggle */}
           <button 
             onClick={() => setShowWizard(!showWizard)}
-            className="px-3.5 py-2 bg-rose-650 hover:bg-rose-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5"
+            className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5"
           >
             <Plus size={14} />
             Add Levels Rule
@@ -452,7 +452,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
       {/* Adding Naye Rules Form Wizard */}
       {showWizard && (
         <form onSubmit={handleAddNewRule} className="mb-6 p-5 bg-slate-950 rounded-xl border border-slate-800 space-y-4 animate-fade-in" id="add-rule-wizard-box">
-          <div className="flex items-center justify-between text-xs font-bold text-rose-400 font-mono border-b border-slate-850 pb-2 mb-2 uppercase">
+          <div className="flex items-center justify-between text-xs font-bold text-rose-400 font-mono border-b border-slate-800 pb-2 mb-2 uppercase">
             <span className="flex items-center gap-1"><Sliders size={13} /> Naya Live Alert Rule Configuration</span>
             <button type="button" onClick={() => setShowWizard(false)} className="text-[10px] hover:underline uppercase text-slate-500">Cancel</button>
           </div>
@@ -464,7 +464,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
               <select 
                 value={formAsset}
                 onChange={(e) => setFormAsset(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-850 rounded px-2.5 py-2 text-slate-100"
+                className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-2 text-slate-100"
               >
                 <option value="nifty">Nifty 50 Index</option>
                 <option value="banknifty">Bank Nifty Index</option>
@@ -483,7 +483,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
               <select 
                 value={formType}
                 onChange={(e) => setFormType(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-850 rounded px-2.5 py-2 text-slate-100"
+                className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-2 text-slate-100"
                 disabled={formAsset === "index-trap"}
               >
                 <option value="PRICE_ABOVE">Crosses Above (से ऊपर)</option>
@@ -499,7 +499,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
                 type="number"
                 value={formValue}
                 onChange={(e) => setFormValue(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-850 rounded px-2.5 py-2 text-slate-100 focus:outline-none"
+                className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-2 text-slate-100 focus:outline-none"
                 placeholder="Limit target"
                 disabled={formAsset === "index-trap"}
                 step="0.05"
@@ -512,7 +512,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
               <select 
                 value={formMode}
                 onChange={(e) => setFormMode(e.target.value as any)}
-                className="w-full bg-slate-900 border border-slate-850 rounded px-2.5 py-2 text-slate-100"
+                className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-2 text-slate-100"
               >
                 <option value="RECURRING">Recurring (बार बार alert)</option>
                 <option value="ONCE">Once Only (एक बार trigger)</option>
@@ -526,7 +526,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
             <textarea 
               value={formDescription}
               onChange={(e) => setFormDescription(e.target.value)}
-              className="w-full h-16 bg-slate-900 border border-slate-850 rounded p-2 text-xs font-sans text-slate-200 focus:outline-none focus:border-rose-950"
+              className="w-full h-16 bg-slate-900 border border-slate-800 rounded p-2 text-xs font-sans text-slate-200 focus:outline-none focus:border-rose-950"
               placeholder="Yahan dynamic live feedback description generate hogi..."
             />
           </div>
@@ -535,7 +535,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
             <button 
               type="button" 
               onClick={() => setShowWizard(false)}
-              className="px-4 py-2 bg-slate-900 hover:bg-slate-850 text-slate-400 text-xs font-bold rounded"
+              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded"
             >
               Cancel
             </button>
@@ -561,7 +561,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
           </div>
 
           {rules.length === 0 ? (
-            <div className="p-8 text-center text-slate-550 bg-slate-950 rounded-xl border border-dashed border-slate-800 leading-relaxed font-sans">
+            <div className="p-8 text-center text-slate-500 bg-slate-950 rounded-xl border border-dashed border-slate-800 leading-relaxed font-sans">
               <BellOff className="mx-auto text-slate-700 mb-2" size={32} />
               <p className="font-semibold text-slate-400">Rules empty hai!</p>
               <p className="text-xs text-slate-500 mt-1">Please use 'Add Levels Rule' button block upar to set new price alert thresholds.</p>
@@ -580,7 +580,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
                         ? "bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-950" 
                         : isFired 
                           ? "bg-rose-950/10 border-rose-900/20 text-slate-400" 
-                          : "bg-slate-900/30 border-slate-850 text-slate-500"
+                          : "bg-slate-900/30 border-slate-800 text-slate-500"
                     }`}
                   >
                     {/* Trash delete button */}
@@ -594,7 +594,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
 
                     <div className="flex items-start gap-2 pr-7">
                       <div className={`p-1.5 rounded-lg mt-0.5 ${
-                        isActive ? "bg-rose-950 text-rose-400 animate-pulse" : "bg-slate-850 text-slate-500"
+                        isActive ? "bg-rose-950 text-rose-400 animate-pulse" : "bg-slate-800 text-slate-500"
                       }`}>
                         <Bell size={13} />
                       </div>
@@ -608,7 +608,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
                             {rule.type === "PRICE_ABOVE" ? "> Above" : rule.type === "PRICE_BELOW" ? "< Below" : "Trap Alarm"}
                           </span>
 
-                          <span className="text-[9.5px] text-slate-450 font-mono font-bold">
+                          <span className="text-[9.5px] text-slate-400 font-mono font-bold">
                             {rule.type !== "TRAP_DANGER" ? `₹${rule.value.toLocaleString("en-IN")}` : ""}
                           </span>
                         </div>
@@ -624,7 +624,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
                             className={`px-2 py-0.5 rounded text-[9.5px] font-mono font-extrabold transition ${
                               isActive 
                                 ? "bg-emerald-950/60 hover:bg-emerald-900 text-emerald-400 border border-emerald-900/40" 
-                                : "bg-slate-850 hover:bg-slate-800 text-slate-400 border border-slate-750"
+                                : "bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700"
                             }`}
                           >
                             {isActive ? "STATUS: ACTIVE 🔔" : isFired ? "STATUS: FIRED ⚡" : "STATUS: MUTED 🔕"}
@@ -656,11 +656,11 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
           </div>
 
           <div 
-            className="p-4 bg-slate-950 rounded-xl border border-slate-850/80 h-[325px] overflow-y-auto space-y-3.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent"
+            className="p-4 bg-slate-950 rounded-xl border border-slate-800 h-[325px] overflow-y-auto space-y-3.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent"
             id="alerts-running-logs-box"
           >
             {logs.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-650 text-xs font-sans">
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 text-xs font-sans">
                 <p>Logs clear hain।</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Jaise hi live prices level breakdown karenge, triggers yahan real-time trace honge.</p>
               </div>
@@ -681,7 +681,7 @@ export default function PriceActionAlertManager({ indicesStatus }: PriceActionAl
                   </p>
 
                   <div className="flex items-center gap-2 mt-2 font-mono text-[9px] text-slate-500">
-                    <span>Type: <span className="text-rose-450">{log.triggerType}</span></span>
+                    <span>Type: <span className="text-rose-400">{log.triggerType}</span></span>
                     <span>|</span>
                     <span>Hit Value: <span className="text-sky-400 font-semibold">{log.currentValue > 0 ? log.currentValue.toLocaleString("en-IN") : "Complex Conditions Match"}</span></span>
                   </div>

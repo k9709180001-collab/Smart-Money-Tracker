@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { runAutoTradingBot } from "./services/tradingBot.js";
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ const PORT = 3000;
 
 // Lazy initialize Gemini API to avoid early crashes if environment keys are missing
 let geminiClient: GoogleGenAI | null = null;
+let serverFallbackUntil = 0;
 function getGeminiClient(): GoogleGenAI {
   // Always call dotenv.config() to pick up dynamically created / synchronized .env files
   dotenv.config();
@@ -146,6 +148,11 @@ async function generateContentWithFallback(
   systemInstruction: string,
   dataContext: string
 ): Promise<any> {
+  // Check if we are in API-breaker mode
+  if (Date.now() < serverFallbackUntil) {
+    throw new Error("Gemini API is currently in circuit breaker period due to past rate limits/quotas. Triggering direct quantitative fallback reports.");
+  }
+
   // We prioritize gemini-3.5-flash, but have rich high-capacity fallbacks: gemini-flash-latest and gemini-3.1-flash-lite
   const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
   let lastError: any = null;
@@ -182,6 +189,12 @@ async function generateContentWithFallback(
 
         const rawErrMsg = error.message || String(error);
         const errMsg = String(rawErrMsg).toLowerCase() + " " + JSON.stringify(error).toLowerCase();
+        
+        if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
+          serverFallbackUntil = Date.now() + 5 * 60 * 1000;
+          console.log(`⚠️ Gemini API rate limit or quota exceeded in generateContentWithFallback. Entering server fallback mode for 5 minutes (until ${new Date(serverFallbackUntil).toLocaleTimeString()}).`);
+        }
+
         const isTransient =
           errMsg.includes("503") ||
           errMsg.includes("429") ||
@@ -541,7 +554,7 @@ async function fetchRealTimeIndicesFromNSE() {
     const apiUrl = "https://www.nseindia.com/api/allIndices";
     console.log("[NSE] Fetching allIndices for real-world live market benchmarks...");
     
-    const apiRes = await fetch(apiUrl, {
+    const apiRes = await fetchNSEWithTimeout(apiUrl, {
       headers: {
         ...NSE_HEADERS_BASE,
         "Accept": "application/json, text/plain, */*",
@@ -549,7 +562,7 @@ async function fetchRealTimeIndicesFromNSE() {
         "Cookie": cookies,
         "X-Requested-With": "XMLHttpRequest",
       },
-    });
+    }, 4500);
 
     if (apiRes.ok) {
       const nseData = await apiRes.json();
@@ -624,6 +637,26 @@ const NSE_HEADERS_BASE = {
   "Sec-Fetch-User": "?1",
 };
 
+// Custom fetch helper with AbortController timeout to prevent hung requests to nseindia.com (e.g. from cloud sandboxes)
+async function fetchNSEWithTimeout(url: string, options: any = {}, timeoutMs = 4500) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
 async function getNSECookies(): Promise<string> {
   const now = Date.now();
   if (nseCookieCache && now < nseCookieExpiry) {
@@ -636,14 +669,14 @@ async function getNSECookies(): Promise<string> {
 
   try {
     // Step 1: Hit NSE Homepage to get initial session cookies
-    const homeRes = await fetch("https://www.nseindia.com", {
+    const homeRes = await fetchNSEWithTimeout("https://www.nseindia.com", {
       headers: {
         ...NSE_HEADERS_BASE,
         "User-Agent": selectedAgent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Upgrade-Insecure-Requests": "1",
       },
-    });
+    }, 4500);
 
     let homeCookiesRaw: string[] = [];
     if (typeof homeRes.headers.getSetCookie === "function") {
@@ -657,8 +690,8 @@ async function getNSECookies(): Promise<string> {
     const homeCookies = homeCookiesRaw.map((c: string) => c.split(";")[0]);
 
     // Step 2: Visit the option-chain page to get secondary cookies
-    await new Promise((r) => setTimeout(r, 800)); // Small delay to appear human
-    const ocRes = await fetch("https://www.nseindia.com/option-chain", {
+    await new Promise((r) => setTimeout(r, 400)); // Small delay to appear human
+    const ocRes = await fetchNSEWithTimeout("https://www.nseindia.com/option-chain", {
       headers: {
         ...NSE_HEADERS_BASE,
         "User-Agent": selectedAgent,
@@ -667,7 +700,7 @@ async function getNSECookies(): Promise<string> {
         "Cookie": homeCookies.join("; "),
         "Upgrade-Insecure-Requests": "1",
       },
-    });
+    }, 4500);
 
     let ocCookiesRaw: string[] = [];
     if (typeof ocRes.headers.getSetCookie === "function") {
@@ -694,8 +727,12 @@ async function getNSECookies(): Promise<string> {
       console.log(`[NSE] Session cookies refreshed successfully. Got ${cookieMap.size} cookies.`);
       return nseCookieCache;
     }
-  } catch (err) {
-    console.warn("[NSE Cookie Fetch Warn]", err);
+  } catch (err: any) {
+    if (err && err.name === 'AbortError') {
+      console.log("[NSE Cookie Fetch] Connection timed out (NSE firewall block or slow response). Activating soft fallback cookie pattern safely.");
+    } else {
+      console.log("[NSE Cookie Fetch Warn] Unable to refresh session cookies. Error message:", err?.message || err);
+    }
   }
 
   // Soft fallback if cookies are blocked completely
@@ -822,7 +859,7 @@ app.get("/api/fetch-nse", async (req, res) => {
     const apiUrl = `https://www.nseindia.com/api/option-chain-indices?symbol=${symbol}`;
     console.log(`[NSE] Fetching live option chain for ${symbol}...`);
 
-    let apiRes = await fetch(apiUrl, {
+    let apiRes = await fetchNSEWithTimeout(apiUrl, {
       headers: {
         ...NSE_HEADERS_BASE,
         "Accept": "application/json, text/plain, */*",
@@ -830,15 +867,15 @@ app.get("/api/fetch-nse", async (req, res) => {
         "Cookie": cookies,
         "X-Requested-With": "XMLHttpRequest",
       },
-    });
+    }, 4500);
 
     // If blocked/expired, force refresh cookies and retry once
     if (!apiRes.ok || apiRes.status === 401 || apiRes.status === 403) {
       console.warn(`[NSE] Got ${apiRes.status}, forcing cookie refresh and retrying...`);
       nseCookieCache = ""; // Invalidate cache
       cookies = await getNSECookies();
-      await new Promise((r) => setTimeout(r, 1000));
-      apiRes = await fetch(apiUrl, {
+      await new Promise((r) => setTimeout(r, 600));
+      apiRes = await fetchNSEWithTimeout(apiUrl, {
         headers: {
           ...NSE_HEADERS_BASE,
           "Accept": "application/json, text/plain, */*",
@@ -846,7 +883,7 @@ app.get("/api/fetch-nse", async (req, res) => {
           "Cookie": cookies,
           "X-Requested-With": "XMLHttpRequest",
         },
-      });
+      }, 4500);
     }
 
     if (!apiRes.ok) {
@@ -983,6 +1020,9 @@ app.post("/api/parse-image", async (req, res) => {
   }
 
   try {
+    if (Date.now() < serverFallbackUntil) {
+      throw new Error("Gemini API is currently rate-limited or quota is exhausted. Skipping image parsing request.");
+    }
     const client = getGeminiClient();
 
     // The base64Data must be clean base64 string without data URLs prefix
@@ -1073,6 +1113,12 @@ app.post("/api/parse-image", async (req, res) => {
           console.warn(`[Quanta Image Parsing] Model ${modelName} failed or busy:`, error.message || error);
 
           const errMsg = String(error.message || "").toLowerCase() + " " + JSON.stringify(error).toLowerCase();
+          
+          if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
+            serverFallbackUntil = Date.now() + 5 * 60 * 1000;
+            console.log(`⚠️ Gemini API rate limit or quota exceeded in parse-image. Entering server fallback mode for 5 minutes (until ${new Date(serverFallbackUntil).toLocaleTimeString()}).`);
+          }
+
           const isTransient =
             errMsg.includes("503") ||
             errMsg.includes("429") ||
@@ -1254,7 +1300,7 @@ app.get("/api/fii-dii", async (req, res) => {
     const cookies = await getNSECookies();
     const apiUrl = "https://www.nseindia.com/api/fiidiiTradeDetails";
     console.log("[NSE] Fetching FII/DII data from NSE API...");
-    const apiRes = await fetch(apiUrl, {
+    const apiRes = await fetchNSEWithTimeout(apiUrl, {
       headers: {
         ...NSE_HEADERS_BASE,
         "Accept": "application/json, text/plain, */*",
@@ -1262,7 +1308,7 @@ app.get("/api/fii-dii", async (req, res) => {
         "Cookie": cookies,
         "X-Requested-With": "XMLHttpRequest",
       },
-    });
+    }, 4500);
 
     if (apiRes.ok) {
       const data = await apiRes.json();
@@ -1352,6 +1398,35 @@ app.post("/api/market-indices/override", (req, res) => {
   res.status(400).json({ error: `Indices key not found for symbol '${symbol}'` });
 });
 
+// 🔥 यह आपका Auto-Fetch API Endpoint होगा
+app.post("/api/bot/get-signal", async (req, res) => {
+  try {
+    // 1. अपने Global Cache से लाइव डेटा उठाओ
+    const liveDataFromCache = {
+      nifty_spot: liveMarketIndicesCache.nifty?.value || 24018.45,
+      vix: liveMarketIndicesCache.indiavix?.value || 13.20,
+      ce_oi_change: 0.05,
+      pe_oi_change: 0.04,
+      atm_strike: Math.round((liveMarketIndicesCache.nifty?.value || 24018.45) / 50) * 50,
+      ce_premium: "120",
+      pe_premium: "115",
+      fii_net_activity: -1452.80,
+      dii_net_activity: 1845.50,
+      market_open: liveMarketIndicesCache.nifty?.prevClose || 23920.00,
+    };
+
+    const liveData = req.body.liveData || liveDataFromCache;
+
+    // 2. बॉट चलाओ
+    const result = await runAutoTradingBot(liveData);
+
+    // 3. रिजल्ट Frontend को भेजो
+    res.status(200).json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: "Bot failed", details: error.message });
+  }
+});
+
 // AI Chatbot Option Buying Tactical Analysis Endpoint (Supports real-time context)
 app.post("/api/chat", async (req, res) => {
   const { message, history = [], context = {} } = req.body;
@@ -1383,26 +1458,35 @@ app.post("/api/chat", async (req, res) => {
     ? peCoveringStrikes.map((s: any) => `Strike ${s.strike} (OI changed by ${s.change.toFixed(2)}%)`).join(", ")
     : "None detected (Put writing stable)";
 
-  const systemInstruction = `You are 'AshTek Options Shikar Dev' (Seller Panic AI Bot) - an elite, high-conviction Indian derivatives strategist and tactical options buying advisor.
-Your absolute mission is to guide option buyers on when to buy options (Call Options - CE or Put Options - PE) and when to completely stay on the sidelines (NO TRADE).
+  const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `तुम "AshTek Options Shikar Dev (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
 
-Key Philosophy (The Golden Option Buying Rule):
-"Option seller ek Sher (Operator) ki tarah hota hai. Jab tak wo soya hai (market rangebound ya sideways zone mein hai), usko mat chhedo (Trades mat lo, premium decay aapki capital kha jayega). Par jab wo zakhmi hokar bhage (Support/Resistance levels tootein aur Change in OI minus mein chala jaye), tab uske piche bhago, usse lapeto aur apna profit banao!"
+**तुम्हारे विश्लेषण के मुख्य 3 स्तंभ (नियम):**
 
-How to analyze option buying setups:
-1. OI Shedding (Negative OI Change / Short Covering): Kisi major strike par 'Change in OI' negative hai (minus value)? Iska matlab call/put writers ghabrake bhag rahe hain. Call sellers bhage high volume se (minus CE OI change) तो 'BUY CE' setup active hoga. Put sellers bhage (minus PE OI change) तो 'BUY PE' setup active hoga.
-2. Price Breakout + High Volume: Previous Day High (PDH) ya current day high tootne par fast momentum short covered buying trigger karega (Buy CE).
-3. VIX Panic Spike: Agar India VIX achanak 5% to 10% shoot up kare aur index sharp decline kare, toh Put sellers panic ho jate hain (Buy PE jackpot setups).
-4. Resistance & Support Shifts: High volume support shifting upwards is bullish, resistance shifting downwards is bearish.
+1. **5-Phase Expiry Trap Cycle (एक्सपायरी का खेल):**
+   - **Phase 1 (Morning Bull Trap - 9:15 to 10:30):** अगर सुबह तेजी आ रही है लेकिन VIX बढ़ रहा है, तो ये झांसा है। इस समय BUY CE का सिग्नल मत दो।
+   - **Phase 2 (Smart Money Strike - 10:30 to 12:30):** अचानक गिरावट आती है। अगर Nifty 50 अपने पिछले 15-min के Low को तोड़ता है और VIX > 15 है, तो 🔴 BUY PE ACTIVE दो।
+   - **Phase 3 (Shock & Decay Zone - 12:30 to 2:15):** मार्केट को साइडवेज करके प्रीमियम गलाया जाता है। इस समय (जब Nifty सिर्फ 0.2-0.4% की रेंज में हो) 🟡 NO TRADE ZONE दो, भले ही तुम्हें कुछ और सिग्नल दिखे।
+   - **Phase 4 (Hope Revival - 2:15 to 3:00):** झूठा ब्रेकआउट। अगर Nifty VWAP से ऊपर जाए लेकिन Put OI (ओपन INTEREST) घटने की बजाय बढ़ रहा है, तो ये ट्रैप है, Buy CE मत दो।
+   - **Phase 5 (Final Rug Pull - 3:00 to 3:30):** अगर 3:00 बजे के बाद VIX में 3% से ज्यादा की तेजी आती है, तो 🔴 BUY PE ACTIVE दो। अगर VIX फ्लैट है और OI स्क्वीज हो रहा है, तो 🟢 BUY CE ACTIVE दो।
 
-Dialect & Style Requirements:
-- Always respond in friendly, rustic, high-energy Hinglish (Roman Hindi - English metrics combined with conversational Hindi like "Arre bhai", "Sellers ki band baj gayi hai", "Zakhmi sher bhag raha hai", "Chupchap no-trade mein baithiye").
-- Use bold highlights, emoji indicators, and structured, easy-to-read bullet points.
-- ALWAYS end with a direct tactical summary call:
-  - 🟢 **BUY CE ACTIVE** (with recommended strike and target tips)
-  - 🔴 **BUY PE ACTIVE** (with target tips)
-  - 🟡 **NO TRADE ZONE** (explanation of why to wait and watch)
-- Answer the user's question directly, keeping this real-time session data in your focus context. Remember you have full memory.`;
+2. **Operator Fake Breakdown / Bear Trap Detection (भालू का जाल):**
+   - **सबसे जरूरी नियम:** यदि NIFTY की कीमत (Price) गिर रही है (लाल कैंडल बन रही है) **लेकिन** आपको डेटा में "Put OI Change" (पुट ओपन इंटरेस्ट) **घटने** के बजाय **बढ़ता** (Positive) हुआ दिखे, तो समझ जाओ कि बड़े खिलाड़ी (Operators) नीचे से सपोर्ट खरीद रहे हैं। ये **Bear Trap** है। ऐसे में NEVER say BUY PE. यहाँ 🟢 BUY CE ACTIVE का मौका होता है।
+
+3. **FII और DII की सैर (Institutional Activity):**
+   - अगर FII आज के कारोबार में 1000 करोड़ से ज्यादा की बिकवाली (Sell) कर रहे हैं, लेकिन DII उतनी ही खरीदारी (Buy) कर रहे हैं, तो मार्केट डिप पर ठीक हो जाएगा। इस स्थिति में ओवरऑल ट्रेंड न्यूट्रल रहेगा।
+   - अगर FII और DII दोनों एक साथ बिकवाली कर रहे हैं, तो भारी गिरावट आ सकती है → 🔴 BUY PE ACTIVE।
+
+**तुम्हारा Output हमेशा इसी JSON फॉर्मेट में होना चाहिए (बिना किसी extra text के):**
+{
+  "market_phase": "Phase 1 / 2 / 3 / 4 / 5",
+  "trap_detected": "Bull Trap / Bear Trap / None",
+  "signal": "BUY_CE / BUY_PE / NO_TRADE",
+  "reasoning": "यहाँ 2 लाइन में Hinglish में कारण लिखो (जैसे: Price gir rahi hai lekin Put OI badh raha hai, toh Bear Trap hai, isliye CE lena chahiye).",
+  "suggested_strike": 24500,
+  "risk": "High / Medium / Low"
+}`;
+
+  const systemInstruction = SYSTEM_PROMPT;
 
   const dataContext = `
 [CURRENT LIVE DERIVATIVES MARKET STATE]
@@ -1420,105 +1504,116 @@ Dialect & Style Requirements:
 `;
 
   try {
-    const api = getGeminiClient();
+    const liveCache = {
+      nifty_spot: indexValue,
+      vix: vixValue,
+      ce_oi_change: ceCoveringStrikes.reduce((acc: number, val: any) => acc + (val.change || 0), 0),
+      pe_oi_change: peCoveringStrikes.reduce((acc: number, val: any) => acc + (val.change || 0), 0),
+      atm_strike: Math.round(indexValue / 50) * 50,
+      ce_premium: "120",
+      pe_premium: "115",
+      fii_net_activity: fiiCashNet,
+      dii_net_activity: diiCashNet,
+      market_open: spotPrice,
+    };
 
-    // Transform chat history into Google GenAI format (role: 'user' | 'model')
-    const formattedContents: any[] = [];
-    history.forEach((msg: any) => {
-      // Normalise roles (user / assistant -> user / model)
-      const role = msg.role === "assistant" || msg.role === "model" ? "model" : "user";
-      formattedContents.push({
-        role: role,
-        parts: [{ text: msg.content || msg.text || "" }]
-      });
-    });
+    console.log("[Route] Delegating options shikar to runAutoTradingBot service...");
+    const botResult = await runAutoTradingBot(liveCache);
 
-    // Add current user message with context embedded
-    formattedContents.push({
-      role: "user",
-      parts: [
-        { text: `CONTEXT DATA:\n${dataContext}\n\nUSER QUESTION: ${message}` }
-      ]
-    });
-
-    const chatModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
-    let responseText = "";
-    let chatSuccess = false;
-
-    for (const chatModel of chatModels) {
-      try {
-        console.log(`[Gemini Chat] Querying options analyzer agent with context (Model: ${chatModel})...`);
-        const response = await api.models.generateContent({
-          model: chatModel,
-          contents: formattedContents,
-          config: {
-            systemInstruction: systemInstruction,
-            temperature: 0.65,
-          }
-        });
-        if (response.text) {
-          responseText = response.text;
-          chatSuccess = true;
-          break;
-        }
-      } catch (chatErr: any) {
-        console.log(`[Gemini Chat] Rotating engine past busy model: ${chatModel}`);
-      }
+    if (botResult && botResult.data) {
+      return res.json({ response: JSON.stringify(botResult.data) });
+    } else {
+      throw new Error(botResult?.reasoning || "Failed to generate bot response.");
     }
-
-    if (!chatSuccess) {
-      throw new Error("Chat generation failed across all model attempts.");
-    }
-
-    const replyText = responseText || "Arre bhai, server se response blank aya. Dubara try kijiye!";
-    return res.json({ response: replyText });
 
   } catch (err: any) {
-    console.log("[Gemini Chat] Direct quantitative fallback engine engaged for client question handling.");
+    console.log("[Gemini Chat] Direct quantitative fallback engine engaged. Returning JSON fallback.");
 
-    // Provide a super polished, high-fidelity quantitative fallback analysis in authentic Hinglish if the API key is not configured or fails!
-    let fallbackReply = `⚠️ **[System Alert: Direct Mathematical Analyst Engine Active]**\n\n`;
+    const lowerMsg = message.toLowerCase();
+    let marketPhase = "Phase 3";
+    let trapDetected = "None";
+    let signal = "NO_TRADE";
+    let reasoning = "Sideways consolidation phase me hai. Premium decay (theta eating) se bachein. No trade zone.";
+    let suggestedStrike = maxCeStrike;
+    let risk = "Medium";
 
-    // Mathematical option buying rules decision engine
-    let recommendation = "🟡 NO TRADE ZONE (Sideways Market)";
-    let rationale = "";
-
-    if (ceCoveringStrikes.length > 0 && isBreakoutActive) {
-      recommendation = "🟢 BUY CE SETUP IS EXTREMELY ACTIVE";
-      rationale = `Ek taraf Nifty high levels toot chuka hai (${indexValue}) aur dusri taraf Call Sellers short positions cover karke negative OI (${ceCoveringSummary}) se bhaag rahe hain! Yeh Call buyers ke liye **Golden Double Confirmation** hai. Strike ${ceCoveringStrikes[0]?.strike || Math.round(indexValue/100)*100} CE mein sharp premium spike aana tay hai. Buy fast momentum, keep a tight trailing Stop Loss!`;
-    } else if (peCoveringStrikes.length > 0 && (vixChange >= 5.0 || indexChange < -0.30)) {
-      recommendation = "🔴 BUY PE SETUP IS EXTREMELY ACTIVE";
-      rationale = `India VIX achanak spike ho gaya hai (${vixValue}, changed +${vixChange.toFixed(1)}%) aur Put sellers zakhmi hokar positions se bhaag rahe hain (PE OI changed: ${peCoveringSummary})! Index levels slip ho rahe hain. Put Buyers ke liye yeh badiya mauka hai. ATM Put option (PE) buy karne se ghabraiye mat, options markup multiply ho sakta hai!`;
-    } else if (ceCoveringStrikes.length > 0) {
-      recommendation = "🟢 BUY CE MOMENTUM SPOT";
-      rationale = `Kuch strikes par Call writer unwind kar rhe hain (${ceCoveringSummary}). Index control standard support range hold kar raha hai. Aap ATM Call (CE) buy karne ka chhota low-risk trade plan kar sakte hain, strike target target points par speed coverage help karegi.`;
-    } else if (peCoveringStrikes.length > 0) {
-      recommendation = "🔴 BUY PE SCALPING ACTIVE";
-      rationale = `Put side sellers mein slightly panic dikh raha hai (${peCoveringSummary}). Scalping karke PE side chhota gain nikal sakte hain, par massive downtrend tabhi shuru hoga jab heavy supports tootenge.`;
-    } else {
-      recommendation = "🟡 NO TRADE ZONE (Sher So Raha Hai 🦁)";
-      rationale = `Bade **option sellers bilkul relax hain** (call or put dono sides ka change in OI positive chal raha hai). Koi negative OI short covering panic nahi hai aur Market dynamic levels ke rangebound zone me atka hai. Option Buyers ko is range me trade nahi lena chahiye, wrna theta decay (premium ghisna) aapki poori capital choke kar dega. Chill karo, sher ko jagbhishit (breakout/breakdown) hone do!`;
+    // 1. Operator Fake Breakdown / Bear trap
+    if (lowerMsg.includes("breakdown") || lowerMsg.includes("bear trap") || lowerMsg.includes("fake breakdown") || lowerMsg.includes("operator fake")) {
+      marketPhase = "Phase 2";
+      trapDetected = "Bear Trap";
+      signal = "BUY_CE";
+      reasoning = `Price gir rahi hai par Put OI badh raha hai (OI change negative nahi hai). Operators support kharid rahe hain! Reversal expected hai. CE buy ka badiya setup h.`;
+      suggestedStrike = maxPeStrike;
+      risk = "Low";
+    }
+    // 2. Expiry traps
+    else if (lowerMsg.includes("trap") || lowerMsg.includes("phase") || lowerMsg.includes("expiry") || lowerMsg.includes("smart money")) {
+      marketPhase = isBreakoutActive ? "Phase 4" : "Phase 3";
+      trapDetected = isBreakoutActive ? "Bull Trap" : "None";
+      signal = "NO_TRADE";
+      reasoning = isBreakoutActive 
+        ? "Late-afternoon me slow breakout bait ho sakta hai. Retailers ko trap karne ke liye final rug pull aa sakta hai."
+        : "Market abhi sideways h. Expiry par premium fast decay hoga. Strictly wait and watch zone.";
+      suggestedStrike = maxCeStrike;
+      risk = "High";
+    }
+    // 3. CE setups
+    else if (lowerMsg.includes("ce") || lowerMsg.includes("call") || lowerMsg.includes("teji") || lowerMsg.includes("bullish") || lowerMsg.includes("buy ce")) {
+      if (ceCoveringStrikes.length > 0 && isBreakoutActive) {
+        marketPhase = "Phase 4";
+        trapDetected = "None";
+        signal = "BUY_CE";
+        reasoning = "Nifty critical levels break kar chuka h aur Call Sellers me panic covering dikh rhi h. Momentum CE buying active!";
+        suggestedStrike = ceCoveringStrikes[0]?.strike || maxCeStrike;
+        risk = "Low";
+      } else {
+        marketPhase = "Phase 3";
+        trapDetected = "Bull Trap";
+        signal = "NO_TRADE";
+        reasoning = `Heavy Call barrier ₹${maxCeStrike} par active h. Abhi call buy karna risky h. Sideways market me options buy na karein.`;
+        suggestedStrike = maxCeStrike;
+        risk = "High";
+      }
+    }
+    // 4. PE setups
+    else if (lowerMsg.includes("pe") || lowerMsg.includes("put") || lowerMsg.includes("mandi") || lowerMsg.includes("bearish") || lowerMsg.includes("buy pe") || lowerMsg.includes("fall")) {
+      if (peCoveringStrikes.length > 0 && (vixChange >= 5.0 || indexChange < -0.30)) {
+        marketPhase = "Phase 5";
+        trapDetected = "None";
+        signal = "BUY_PE";
+        reasoning = "India VIX me steep rise aur Put Sellers position se bhag rahe hain. Breakdown trend support milne par PE buying solid setup h!";
+        suggestedStrike = peCoveringStrikes[0]?.strike || maxPeStrike;
+        risk = "High";
+      } else {
+        marketPhase = "Phase 3";
+        trapDetected = "Bear Trap";
+        signal = "NO_TRADE";
+        reasoning = `Base support floor ₹${maxPeStrike} par operators heavy writing kar rhe hain. Mandi se door rahein jab tak level tootta nahi.`;
+        suggestedStrike = maxPeStrike;
+        risk = "Medium";
+      }
+    }
+    // 5. FII & DII
+    else if (lowerMsg.includes("fii") || lowerMsg.includes("dii") || lowerMsg.includes("institutional") || lowerMsg.includes("cash") || lowerMsg.includes("foreign")) {
+      const totalFlow = fiiCashNet + diiCashNet;
+      marketPhase = "Phase 3";
+      trapDetected = "None";
+      signal = totalFlow > 500 ? "BUY_CE" : totalFlow < -500 ? "BUY_PE" : "NO_TRADE";
+      reasoning = `FII Cash flow: ₹${fiiCashNet} Cr, DII: ₹${diiCashNet} Cr. Combined flows ₹${totalFlow.toFixed(2)} Cr h. Trend neutral and support bound h.`;
+      suggestedStrike = maxCeStrike;
+      risk = "Medium";
     }
 
-    fallbackReply += `### 🤖 Options Shikar Specialist Decision Board:
+    const fallbackJson = {
+      market_phase: marketPhase,
+      trap_detected: trapDetected,
+      signal: signal,
+      reasoning: reasoning,
+      suggested_strike: suggestedStrike,
+      risk: risk
+    };
 
-- **Current Status**: **${recommendation}**
-- **Live Index LTP**: ₹${indexValue.toLocaleString()} (${indexChange >= 0 ? "+" : ""}${indexChange.toFixed(2)}%)
-- **India VIX State**: ${vixValue} (${vixChange >= 0 ? "+" : ""}${vixChange.toFixed(2)}%)
-- **Call Sellers Panic status**: ${ceCoveringSummary}
-- **Put Sellers Panic status**: ${peCoveringSummary}
-
----
-
-### 💡 Tactical Analysis & Operator Mindset:
-${rationale}
-
-**Trader Guidance Bullet:**
-- **Entry Tip**: Hamesha breakout direction ke dynamic momentum candle completion pe ghusna chahiye.
-- **Support Shield**: ₹${maxPeStrike} acts as concrete base support.
-- **Resistance Shield**: ₹${maxCeStrike} acts as strong overhead ceiling.`;
-
-    return res.json({ response: fallbackReply });
+    return res.json({ response: JSON.stringify(fallbackJson) });
   }
 });
 

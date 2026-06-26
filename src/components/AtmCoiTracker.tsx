@@ -121,10 +121,10 @@ export default function AtmCoiTracker({ optionChain, spotPrice }: AtmCoiTrackerP
 
       {/* STRIKE LIST HEATMAP PROGRESS METERS */}
       <div className="space-y-4" id="strikes-progress-container">
-        <div className="grid grid-cols-12 text-[10px] text-slate-500 font-mono uppercase tracking-wider mb-1 px-2">
-          <div className="col-span-5 text-right pr-4">CE COI ADDITION (Call Sellers)</div>
-          <div className="col-span-2 text-center text-amber-500 font-bold">STRIKE PRICE</div>
-          <div className="col-span-5 text-left pl-4">PE COI ADDITION (Put Sellers)</div>
+        <div className="grid grid-cols-12 text-[9px] sm:text-[10px] text-slate-500 font-mono uppercase tracking-wider mb-1 px-1 sm:px-2 gap-1 sm:gap-2">
+          <div className="col-span-5 text-right pr-1 sm:pr-4 truncate">CE COI <span className="hidden sm:inline">ADDITION (Call Sellers)</span></div>
+          <div className="col-span-2 text-center text-amber-500 font-bold">STRIKE</div>
+          <div className="col-span-5 text-left pl-1 sm:pl-4 truncate">PE COI <span className="hidden sm:inline">ADDITION (Put Sellers)</span></div>
         </div>
 
         {atmStrikes.map((s, idx) => {
@@ -140,18 +140,18 @@ export default function AtmCoiTracker({ optionChain, spotPrice }: AtmCoiTrackerP
           return (
             <div 
               key={s.strike} 
-              className={`grid grid-cols-12 items-center py-2 px-1 rounded-xl transition ${
+              className={`grid grid-cols-12 items-center py-2 px-1 rounded-xl transition gap-1 sm:gap-2 ${
                 isCurrentAtm ? "bg-slate-800/50 border border-slate-700/60" : "hover:bg-slate-800/25"
               }`}
             >
               {/* === CALL COI PROGRESS (Left aligned to right) === */}
-              <div className="col-span-5 flex items-center justify-end gap-2.5">
-                <span className="text-[11px] font-mono font-bold text-slate-400">
+              <div className="col-span-5 flex items-center justify-end gap-1.5 sm:gap-2.5">
+                <span className="text-[10px] sm:text-[11px] font-mono font-bold text-slate-400 shrink-0">
                   {cePositive ? "+" : ""}{s.callOIchg.toFixed(1)}%
                 </span>
                 
                 {/* Bar */}
-                <div className="w-full bg-slate-950 h-3.5 rounded-md overflow-hidden flex justify-end max-w-[140px] md:max-w-none">
+                <div className="w-full bg-slate-950 h-3.5 rounded-md overflow-hidden flex justify-end max-w-[70px] sm:max-w-[140px] md:max-w-none">
                   <div 
                     className={`h-full rounded-l ${cePositive ? 'bg-gradient-to-l from-rose-500 to-rose-600' : 'bg-gradient-to-l from-slate-600 to-slate-700'}`}
                     style={{ width: `${callPercent}%` }}
@@ -161,27 +161,27 @@ export default function AtmCoiTracker({ optionChain, spotPrice }: AtmCoiTrackerP
 
               {/* === STRIKE CENTER COLUMN === */}
               <div className="col-span-2 text-center relative py-1">
-                <span className={`text-xs font-mono font-extrabold tracking-tight ${isCurrentAtm ? 'text-amber-400 text-sm' : 'text-slate-200'}`}>
+                <span className={`text-[11px] sm:text-xs font-mono font-extrabold tracking-tight ${isCurrentAtm ? 'text-amber-400 sm:text-sm' : 'text-slate-200'}`}>
                   {s.strike}
                 </span>
                 {isCurrentAtm && (
-                  <span className="block text-[8px] bg-amber-500 text-slate-950 font-bold px-0.5 rounded-sm uppercase tracking-wider mx-auto w-fit mt-0.5 scale-90">
-                    SPOT ATM
+                  <span className="block text-[7px] sm:text-[8px] bg-amber-500 text-slate-950 font-bold px-0.5 rounded-sm uppercase tracking-wider mx-auto w-fit mt-0.5 scale-90">
+                    SPOT
                   </span>
                 )}
               </div>
 
               {/* === PUT COI PROGRESS (Right aligned to left) === */}
-              <div className="col-span-5 flex items-center justify-start gap-2.5">
+              <div className="col-span-5 flex items-center justify-start gap-1.5 sm:gap-2.5">
                 {/* Bar */}
-                <div className="w-full bg-slate-950 h-3.5 rounded-md overflow-hidden flex justify-start max-w-[140px] md:max-w-none">
+                <div className="w-full bg-slate-950 h-3.5 rounded-md overflow-hidden flex justify-start max-w-[70px] sm:max-w-[140px] md:max-w-none">
                   <div 
                     className={`h-full rounded-r ${pePositive ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' : 'bg-gradient-to-r from-slate-600 to-slate-700'}`}
                     style={{ width: `${putPercent}%` }}
                   />
                 </div>
 
-                <span className="text-[11px] font-mono font-bold text-slate-400">
+                <span className="text-[10px] sm:text-[11px] font-mono font-bold text-slate-400 shrink-0">
                   {pePositive ? "+" : ""}{s.putOIchg.toFixed(1)}%
                 </span>
               </div>

@@ -8,6 +8,7 @@ import { OptionChainRow, FiiDiiData, DerivativesReport } from "./types";
 import { DEFAULT_OPTION_CHAIN, DEFAULT_FII_DII, DEFAULT_SPOT_PRICE } from "./data/defaults";
 import { USER_PASTED_OPTION_CHAIN } from "./data/pastedData";
 import OptionChainTable from "./components/OptionChainTable";
+import AnalystHub from "./components/AnalystHub";
 import FiiDiiPanel from "./components/FiiDiiPanel";
 import AnalystReport from "./components/AnalystReport";
 import AtmCoiTracker from "./components/AtmCoiTracker";
@@ -21,11 +22,17 @@ import IndexChartViewer from "./components/IndexChartViewer";
 import AtmSportsAnalyzer from "./components/AtmSportsAnalyzer";
 import ExpiryAnalyzer from "./components/ExpiryAnalyzer";
 import StrategySimulator from "./components/StrategySimulator";
+import WealthManagement from "./components/WealthManagement";
+import SipCompounding from "./components/SipCompounding";
+import SipCalculator from "./components/SipCalculator";
+import AdminDashboard from "./components/AdminDashboard";
+import LongStraddleDashboard from "./components/LongStraddleDashboard";
 import { parseSensibullCSV } from "./utils/csvParser";
 import { 
   TrendingUp, TrendingDown, Clipboard, AlertTriangle, Play, HelpCircle, 
-  BrainCircuit, Sparkles, BookOpen, BarChart3, LineChart, FileText, ChevronRight,
-  Upload, Image, RefreshCw, FileUp, CheckCircle2, Globe, Target, Layers, Hourglass, Flame, Trophy, Sliders
+  BrainCircuit, Sparkles, BookOpen, BarChart3, LineChart, FileText, ChevronRight, ChevronLeft,
+  Upload, Image, RefreshCw, FileUp, CheckCircle2, Globe, Target, Layers, Hourglass, Flame, Trophy, Sliders,
+  Briefcase, PiggyBank, Calculator, Lock, LockOpen, ShieldAlert, Home
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
@@ -59,7 +66,74 @@ export default function App() {
   const [activeUploadTab, setActiveUploadTab] = useState<"paste" | "csv" | "image" | "live">("live");
 
   // Navigation pages state
-  const [activePage, setActivePage] = useState<"dashboard" | "report" | "seller" | "seller-panic" | "atm" | "atm-sports" | "expiry" | "strategy" | "vix" | "tripwire" | "fiidii">("dashboard");
+  const [activePage, setActivePage] = useState<"intro" | "dashboard" | "report" | "seller" | "seller-panic" | "atm" | "atm-sports" | "expiry" | "strategy" | "vix" | "tripwire" | "fiidii" | "wealth" | "sip" | "sip-calc" | "admin">("intro");
+  const [analystActiveTool, setAnalystActiveTool] = useState<string>("option-chain");
+  const [analystShowDirectory, setAnalystShowDirectory] = useState<boolean>(true);
+  const [atmSubTab, setAtmSubTab] = useState<"straddle" | "coi">("straddle");
+
+  const navScrollRef = React.useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  const handleNavScroll = React.useCallback(() => {
+    if (navScrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = navScrollRef.current;
+      setCanScrollLeft(scrollLeft > 2);
+      setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 5);
+    }
+  }, []);
+
+  const scrollNav = (direction: "left" | "right") => {
+    if (navScrollRef.current) {
+      const scrollAmount = 260;
+      navScrollRef.current.scrollBy({
+        left: direction === "left" ? -scrollAmount : scrollAmount,
+        behavior: "smooth"
+      });
+      setTimeout(handleNavScroll, 350);
+    }
+  };
+
+  React.useEffect(() => {
+    const el = navScrollRef.current;
+    if (el) {
+      handleNavScroll();
+      // Run fallback check after short delay to let layout settle
+      const timer = setTimeout(handleNavScroll, 600);
+      el.addEventListener("scroll", handleNavScroll);
+      window.addEventListener("resize", handleNavScroll);
+      return () => {
+        clearTimeout(timer);
+        el.removeEventListener("scroll", handleNavScroll);
+        window.removeEventListener("resize", handleNavScroll);
+      };
+    }
+  }, [handleNavScroll]);
+
+  React.useEffect(() => {
+    if (navScrollRef.current) {
+      const activeBtn = navScrollRef.current.querySelector(
+        `[id^="nav-btn-"][class*="bg-black"], [id^="nav-btn-"][class*="bg-teal-905"], [id^="nav-btn-"][class*="bg-indigo-900"], [id^="nav-btn-"][class*="bg-slate-900"], [id^="nav-btn-"][class*="bg-teal-900"]`
+      );
+      if (activeBtn) {
+        activeBtn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      }
+      setTimeout(handleNavScroll, 400);
+    }
+  }, [activePage, handleNavScroll]);
+
+  // Auto-collapse Analyst Tools Suite directory when user scrolls down
+  React.useEffect(() => {
+    const handleScroll = () => {
+      if (activePage === "dashboard" && analystShowDirectory && window.scrollY > 120) {
+        setAnalystShowDirectory(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [activePage, analystShowDirectory]);
 
   // Live NSE States
   const [selectedSymbol, setSelectedSymbol] = useState<string>("NIFTY");
@@ -73,6 +147,7 @@ export default function App() {
 
   // Market indices status with live backend feeds
   const [indicesStatus, setIndicesStatus] = useState<any>(null);
+  const [botAlert, setBotAlert] = useState<any>(null);
   const [overrideSymbol, setOverrideSymbol] = useState<string | null>(null);
   const [overrideVal, setOverrideVal] = useState<string>("");
 
@@ -86,6 +161,14 @@ export default function App() {
   const [imageParsing, setImageParsing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+
+  // Admin Login & Console States
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(false);
+  const [isAdminLoginModalOpen, setIsAdminLoginModalOpen] = useState<boolean>(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
+  const [adminPin, setAdminPin] = useState<string>("");
+  const [adminLoginError, setAdminLoginError] = useState<string>("");
+  const [pendingPastedImage, setPendingPastedImage] = useState<{ base64: string, mimeType: string } | null>(null);
 
   // Analysis result & loading states
   const [report, setReport] = useState<DerivativesReport | null>(null);
@@ -344,6 +427,49 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoRefresh, selectedSymbol, isLiveNseDisabled]);
 
+  // Periodic 5-minute Auto Trading Bot Signal Checker
+  useEffect(() => {
+    const fetchBotSignal = async () => {
+      try {
+        console.log("[Auto Bot Check] Querying background AI trading signal...");
+        const res = await fetch("/api/bot/get-signal", { method: "POST" });
+        const data = await res.json();
+        
+        if (data.success && data.data && (data.data.signal === "BUY_CE" || data.data.signal === "BUY_PE")) {
+          // Play a small beep / audio notification if permitted by browser
+          try {
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+          } catch (audioErr) {
+            console.log("Audio alert blocked by browser context.");
+          }
+
+          // Visual pop-up overlay modal state in UI
+          setBotAlert(data.data);
+          
+          // Browser window alert as requested
+          alert(`🚨 AshTek SIGNAL TRIGGERED: ${data.data.signal} at ${data.data.suggested_strike}\nReasoning: ${data.data.reasoning}`);
+        }
+      } catch (err) {
+        console.error("Bot background fetch error:", err);
+      }
+    };
+
+    // Trigger immediately on mount
+    fetchBotSignal();
+
+    // Check every 5 minutes (300,000 ms)
+    const interval = setInterval(fetchBotSignal, 300000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleRunAnalysis = async () => {
     setLoading(true);
     setErrorStatus(null);
@@ -518,8 +644,10 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const parseImageWithGemini = async () => {
-    if (!selectedImage) return;
+  const parseImageWithGemini = async (overrideImage?: string, overrideMime?: string) => {
+    const targetImage = overrideImage || selectedImage;
+    const targetMime = overrideMime || imageMimeType;
+    if (!targetImage) return;
     setImageParsing(true);
     setErrorStatus(null);
     try {
@@ -529,8 +657,8 @@ export default function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          base64Data: selectedImage,
-          mimeType: imageMimeType,
+          base64Data: targetImage,
+          mimeType: targetMime,
         }),
       });
 
@@ -568,6 +696,48 @@ export default function App() {
       setImageParsing(false);
     }
   };
+
+  // Global paste handler to detect pasted screenshots from clipboard and auto-analyze them
+  useEffect(() => {
+    const handleGlobalPaste = async (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+            const file = items[i].getAsFile();
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = async (event) => {
+                const base64 = event.target?.result as string;
+                
+                if (isAdminLoggedIn) {
+                  setSelectedImage(base64);
+                  setImageMimeType(file.type);
+                  setUploadedFileName("Pasted Clipboard Screenshot (" + new Date().toLocaleTimeString() + ")");
+                  setActiveUploadTab("image");
+                  setIsAdminPanelOpen(true);
+                  setParseSuccessMessage("क्लिपबोर्ड से इमेज डिटेक्ट हो गई है! Gemini 3.5 Vision AI से ऑप्शन चेन रीड किया जा रहा है...");
+                  await parseImageWithGemini(base64, file.type);
+                } else {
+                  // Save pending pasted image, and open login
+                  setPendingPastedImage({ base64, mimeType: file.type });
+                  setAdminPin("");
+                  setAdminLoginError("An option chain screenshot was detected in your clipboard! Enter the passcode below to unlock the Admin Portal & run Gemini 3.5 Vision AI to fetch all data.");
+                  setIsAdminLoginModalOpen(true);
+                }
+              };
+              reader.readAsDataURL(file);
+              break;
+            }
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", handleGlobalPaste);
+    return () => {
+      window.removeEventListener("paste", handleGlobalPaste);
+    };
+  }, [parseImageWithGemini, isAdminLoggedIn]);
 
   const handleResetDefaultData = () => {
     setOptionChain(DEFAULT_OPTION_CHAIN);
@@ -626,6 +796,35 @@ export default function App() {
     }
   };
 
+  const handleAdminLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminPin === "1234" || adminPin === "admin123" || adminPin.toLowerCase() === "admin") {
+      setIsAdminLoggedIn(true);
+      setIsAdminLoginModalOpen(false);
+      setAdminLoginError("");
+      
+      // If there was a pending pasted image, process it now!
+      if (pendingPastedImage) {
+        const { base64, mimeType } = pendingPastedImage;
+        setSelectedImage(base64);
+        setImageMimeType(mimeType);
+        setUploadedFileName("Pasted Clipboard Screenshot (" + new Date().toLocaleTimeString() + ")");
+        setActiveUploadTab("image");
+        setActivePage("admin");
+        setParseSuccessMessage("लॉगिन सफल! अब Gemini 3.5 Vision AI से ऑप्शन चेन प्रोसेस की जा रही है...");
+        setPendingPastedImage(null);
+        await parseImageWithGemini(base64, mimeType);
+      } else {
+        // Open the admin panel normally
+        setActivePage("admin");
+        setParseSuccessMessage("Welcome to AshTek Smart Money Admin Console. Manual upload is now active.");
+        setTimeout(() => setParseSuccessMessage(null), 5000);
+      }
+    } else {
+      setAdminLoginError("Invalid Passcode! Please try again. (Hint: Use '1234' or 'admin123')");
+    }
+  };
+
   // Convert option chain into Recharts friendly format
   const barChartData = optionChain.map((row) => ({
     strike: row.strike.toString(),
@@ -637,259 +836,781 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100 selection:text-indigo-900" id="trader-app-root">
       
       {/* PROFESSIONAL TITLE / HEADER BAR */}
-      <header className="border-b border-sky-200 bg-sky-50 sticky top-0 z-50 px-6 py-4 flex flex-wrap justify-between items-center gap-4 shadow-xs" id="main-header">
-        <div className="flex items-center gap-3">
-          <div className="p-1.5 bg-slate-150 border border-slate-200 text-black rounded-lg shadow-xs flex items-center justify-center animate-pulse" id="header-logo-container">
-            <BrainCircuit size={20} className="text-black" />
+      <header className="border-b border-slate-800 bg-gradient-to-r from-slate-900 via-slate-850 to-indigo-950 text-white sticky top-0 z-50 px-4 sm:px-6 py-4 sm:py-4.5 flex flex-wrap justify-between items-center gap-3 sm:gap-4 shadow-md" id="main-header">
+        <div className="flex items-center gap-3" id="header-left-brand">
+          <div className="p-2 bg-slate-800/90 border border-slate-700/80 text-orange-500 rounded-lg shadow-sm flex items-center justify-center animate-pulse" id="header-logo-container">
+            <BrainCircuit size={19} className="text-orange-500" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-tight text-slate-800 font-sans">
-                AshTek Trader Pro
-              </h1>
-            </div>
-            <p className="text-xs text-slate-500 font-medium">
-              Professional Derivatives Trader &amp; Quantitative Analysis Engine
-            </p>
+          <div className="flex items-center justify-center">
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white font-sans leading-none py-0.5 select-none">
+              ASHTEK Smart Money
+            </h1>
           </div>
         </div>
 
-        {/* Header content only contains title and logo to keep it pristine */}
+        {/* Admin Login / Panel Button on Right */}
+        <div className="flex items-center gap-3">
+          {isAdminLoggedIn ? (
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-[10.5px] bg-indigo-500/10 border border-indigo-400/30 text-indigo-300 px-2.5 py-1 rounded-md font-mono font-bold uppercase tracking-wider animate-pulse">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
+                Admin Active
+              </span>
+              <button
+                type="button"
+                onClick={() => setActivePage("admin")}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-500 rounded-lg text-xs font-bold font-mono tracking-wide flex items-center gap-1.5 cursor-pointer shadow-sm transition-all duration-200"
+                id="btn-admin-console"
+              >
+                <LockOpen size={13} className="text-white" />
+                <span>Console</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdminLoggedIn(false);
+                  if (activePage === "admin") {
+                    setActivePage("dashboard");
+                  }
+                }}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-red-950/40 hover:text-red-400 text-slate-300 border border-slate-700/80 rounded-lg text-xs font-mono cursor-pointer transition-colors duration-150"
+                id="btn-admin-logout"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAdminPin("");
+                setAdminLoginError("");
+                setActivePage("admin");
+              }}
+              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 rounded-lg text-xs font-bold font-mono tracking-wide flex items-center gap-1.5 cursor-pointer transition-all duration-200 shadow-sm"
+              id="btn-admin-login-trigger"
+            >
+              <Lock size={12} className="text-indigo-400" />
+              <span>Admin</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* NAVIGATION HORIZONTAL SCROLL BAR WITH EXACT PAGES REQUESTED */}
-      <nav className="bg-sky-50 border-b border-sky-100 sticky top-[73px] z-40 shadow-xs" id="main-navigation-menu">
-        <div className="max-w-7xl mx-auto px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1 overflow-x-auto scrollbar-none flex items-center gap-2.5 whitespace-nowrap pb-1 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" id="nav-scroll-container">
+      <nav className="bg-sky-50 border-b border-sky-100 sm:sticky sm:top-[73px] z-40 shadow-xs" id="main-navigation-menu">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-1 sm:py-1.5">
+          <div className="flex items-center gap-2 sm:gap-3">
+            
+            {/* LEFT SIDE SCROLL BUTTON */}
+            <button
+              type="button"
+              onClick={() => scrollNav("left")}
+              disabled={!canScrollLeft}
+              className={`hidden sm:flex p-1 sm:p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 transition-all cursor-pointer shadow-3xs items-center justify-center shrink-0 ${
+                !canScrollLeft ? "opacity-30 cursor-not-allowed text-slate-300" : "text-slate-700 hover:text-black hover:scale-105 active:scale-95"
+              }`}
+              id="btn-nav-scroll-left"
+              title="Scroll Left"
+            >
+              <ChevronLeft size={16} className="stroke-[2.5]" />
+            </button>
+
+            {/* WRAPPER WITH GRADIENT MASKS */}
+            <div className="relative flex-1 flex items-center overflow-hidden">
+              {/* LEFT GRADIENT FADE */}
+              {canScrollLeft && (
+                <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-sky-50 to-transparent pointer-events-none z-10" />
+              )}
+              
+              {/* HORIZONTAL SCROLL AREA */}
+              <div 
+                ref={navScrollRef}
+                onScroll={handleNavScroll}
+                className="flex-1 overflow-x-auto scrollbar-none flex items-center gap-2.5 whitespace-nowrap pb-1 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" 
+                id="nav-scroll-container"
+              >
+
+              {/* Intro & Guide */}
+              <button
+                id="nav-btn-intro"
+                type="button"
+                onClick={() => {
+                  setActivePage("intro");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "intro" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+              >
+                <Home size={12} className={activePage === "intro" ? "text-indigo-400" : "text-indigo-500"} />
+                <span>Intro & Guide</span>
+              </button>
               
               {/* Analyst */}
               <button 
                 type="button"
-                onClick={() => setActivePage("dashboard")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
-                  activePage === "dashboard" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                onClick={() => {
+                  setActivePage("dashboard");
+                  setAnalystActiveTool("option-chain");
+                  setAnalystShowDirectory(true);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "dashboard" && analystActiveTool !== "derivative-intelligence"
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-analyst"
               >
-                <LineChart size={14} />
+                <LineChart size={12} className="text-sky-500" />
                 <span>Analyst</span>
               </button>
 
-              {/* Intelligence */}
+              {/* Index */}
               <button 
                 type="button"
-                onClick={() => setActivePage("report")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
-                  activePage === "report" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                onClick={() => {
+                  setActivePage("index");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "index" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
-                id="nav-btn-intelligence"
+                id="nav-btn-index"
               >
-                <Sparkles size={14} className={activePage === "report" ? "text-amber-400" : ""} />
-                <span>Intelligence</span>
+                <LineChart size={12} className="text-emerald-500" />
+                <span>Index</span>
+              </button>
+
+              {/* Vix Matrix */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("vix");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "vix" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-vix"
+              >
+                <Clipboard size={12} className="text-violet-500" />
+                <span>Vix Matrix</span>
+              </button>
+
+              {/* ATM intelligence */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("atm");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "atm" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-atm"
+              >
+                <Target size={12} className={activePage === "atm" ? "text-rose-400" : "text-rose-500"} />
+                <span>ATM intelligence</span>
+              </button>
+
+              {/* Seller panic */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("seller-panic");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "seller-panic" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
+                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
+                }`}
+                id="nav-btn-seller-panic"
+              >
+                <Flame size={12} className={activePage === "seller-panic" ? "text-orange-400 animate-pulse" : "text-orange-550"} />
+                <span>Seller panic</span>
               </button>
 
               {/* Seller */}
               <button 
                 type="button"
-                onClick={() => setActivePage("seller")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                onClick={() => {
+                  setActivePage("seller");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                   activePage === "seller" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-seller"
               >
-                <Layers size={14} className={activePage === "seller" ? "text-indigo-400" : "text-indigo-505"} />
+                <Layers size={12} className={activePage === "seller" ? "text-indigo-400" : "text-indigo-505"} />
                 <span>Seller</span>
               </button>
 
-              {/* Panic Radar */}
+              {/* Intelligence */}
               <button 
                 type="button"
-                onClick={() => setActivePage("seller-panic")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
-                  activePage === "seller-panic" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                onClick={() => {
+                  setActivePage("dashboard");
+                  setAnalystActiveTool("derivative-intelligence");
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "dashboard" && analystActiveTool === "derivative-intelligence"
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
-                id="nav-btn-seller-panic"
+                id="nav-btn-intelligence"
               >
-                <Flame size={14} className={activePage === "seller-panic" ? "text-orange-400 animate-pulse" : "text-orange-550"} />
-                <span>Panic radar</span>
+                <Sparkles size={12} className={activePage === "dashboard" && analystActiveTool === "derivative-intelligence" ? "text-amber-400 animate-pulse" : "text-amber-550"} />
+                <span>Intelligence</span>
               </button>
 
-              {/* ATM */}
+              {/* Sports Arena */}
               <button 
                 type="button"
-                onClick={() => setActivePage("atm")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
-                  activePage === "atm" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
-                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
-                }`}
-                id="nav-btn-atm"
-              >
-                <Target size={14} className={activePage === "atm" ? "text-rose-400" : "text-rose-500"} />
-                <span>ATM</span>
-              </button>
-
-              {/* 50s sports arena */}
-              <button 
-                type="button"
-                onClick={() => setActivePage("atm-sports")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                onClick={() => {
+                  setActivePage("atm-sports");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                   activePage === "atm-sports" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-atm-sports"
               >
-                <Trophy size={14} className={activePage === "atm-sports" ? "text-amber-300" : "text-amber-500"} />
-                <span>50s sports arena</span>
+                <Trophy size={12} className={activePage === "atm-sports" ? "text-amber-300 animate-bounce" : "text-amber-505"} />
+                <span>Sports Arena</span>
               </button>
 
-              {/* Expiry day analyzer */}
+              {/* Expiry */}
               <button 
                 type="button"
-                onClick={() => setActivePage("expiry")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                onClick={() => {
+                  setActivePage("expiry");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                   activePage === "expiry" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-250"
                 }`}
                 id="nav-btn-expiry"
               >
-                <Hourglass size={14} className={activePage === "expiry" ? "text-amber-400" : "text-amber-650"} />
-                <span>Expiry day analyzer</span>
+                <Hourglass size={12} className="text-pink-500" />
+                <span>Expiry</span>
               </button>
 
-              {/* ADDITIONAL ADVANCED SCROLL-ABLE FEATURES */}
+              {/* Wealth Management */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("wealth");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "wealth" 
+                    ? "bg-teal-900 text-white border-teal-950 shadow-xs scale-[1.01]" 
+                    : "bg-teal-50/50 text-teal-850 hover:text-teal-950 hover:bg-teal-100/60 border-teal-200/60"
+                }`}
+                id="nav-btn-wealth"
+              >
+                <Briefcase size={12} className="text-teal-555" />
+                <span>Wealth</span>
+              </button>
+
+              {/* SIP Compounding */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("sip");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "sip" 
+                    ? "bg-slate-900 text-white border-black shadow-xs scale-[1.01]" 
+                    : "bg-sky-50 text-sky-850 hover:text-sky-950 hover:bg-sky-100 border-sky-200/70"
+                }`}
+                id="nav-btn-sip"
+              >
+                <PiggyBank size={12} className="text-sky-600" />
+                <span>SIP Comp</span>
+              </button>
+
+              {/* SIP Calculator */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setActivePage("sip-calc");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
+                  activePage === "sip-calc" 
+                    ? "bg-indigo-900 text-white border-indigo-950 shadow-xs scale-[1.01]" 
+                    : "bg-indigo-50 text-indigo-850 hover:text-indigo-950 hover:bg-indigo-100 border-indigo-200/70"
+                }`}
+                id="nav-btn-sip-calc"
+              >
+                <Calculator size={12} className="text-indigo-605" />
+                <span>SIP Calc</span>
+              </button>
+
               {/* Strategy Simulator */}
               <button 
                 type="button"
-                onClick={() => setActivePage("strategy")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border relative overflow-hidden ${
+                onClick={() => {
+                  setActivePage("strategy");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border relative overflow-hidden shrink-0 ${
                   activePage === "strategy" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-strategy"
               >
-                <Sliders size={14} className="text-teal-500" />
-                <span>Strategy Simulator</span>
+                <Sliders size={12} className="text-teal-500" />
+                <span>Simulator</span>
               </button>
 
-              {/* India VIX Matrix */}
+              {/* Heavyweights */}
               <button 
                 type="button"
-                onClick={() => setActivePage("vix")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
-                  activePage === "vix" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
-                    : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
-                }`}
-                id="nav-btn-vix"
-              >
-                <Clipboard size={14} className="text-violet-500" />
-                <span>India VIX Matrix</span>
-              </button>
-
-              {/* Heavyweights Driver Matrix */}
-              <button 
-                type="button"
-                onClick={() => setActivePage("tripwire")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                onClick={() => {
+                  setActivePage("tripwire");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                   activePage === "tripwire" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-tripwire"
               >
-                <Globe size={14} className="text-blue-500" />
-                <span>Heavyweights Driver Matrix</span>
+                <Globe size={12} className="text-blue-500" />
+                <span>Heavyweights</span>
               </button>
 
               {/* Institutional FII/DII Cashflows */}
               <button 
                 type="button"
-                onClick={() => setActivePage("fiidii")}
-                className={`px-4.5 py-2.5 rounded-xl font-bold font-mono text-xs transition-all duration-205 flex items-center gap-2 cursor-pointer border ${
+                onClick={() => {
+                  setActivePage("fiidii");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg font-bold font-mono text-[10px] sm:text-xs transition-all duration-150 flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                   activePage === "fiidii" 
-                    ? "bg-black text-white border-black shadow-md scale-[1.02]" 
+                    ? "bg-black text-white border-black shadow-xs scale-[1.01]" 
                     : "bg-white text-slate-700 hover:text-black hover:bg-slate-50 border-slate-200"
                 }`}
                 id="nav-btn-fiidii"
               >
-                <Clipboard size={14} className="text-emerald-505" />
-                <span>Institutional FII/DII Flows</span>
+                <Clipboard size={12} className="text-emerald-505" />
+                <span>FII/DII</span>
               </button>
 
             </div>
 
-            {/* Scroll indicator instructions tag */}
-            <div className="flex items-center gap-1.5 text-slate-400 bg-slate-100 border border-slate-250 py-1.5 px-3 rounded-lg select-none text-[10px] font-mono shrink-0 animate-pulse">
-              <span>Scroll Left/Right</span>
-              <ChevronRight size={12} className="text-slate-500 animate-bounce horizontal-bounce" />
+            {/* RIGHT GRADIENT FADE */}
+            {canScrollRight && (
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-sky-50 to-transparent pointer-events-none z-10" />
+            )}
             </div>
+
+            {/* RIGHT SIDE SCROLL BUTTON */}
+            <button
+              type="button"
+              onClick={() => scrollNav("right")}
+              disabled={!canScrollRight}
+              className={`hidden sm:flex p-1 sm:p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 transition-all cursor-pointer shadow-3xs items-center justify-center shrink-0 ${
+                !canScrollRight ? "opacity-30 cursor-not-allowed text-slate-300" : "text-slate-700 hover:text-black hover:scale-105 active:scale-95"
+              }`}
+              id="btn-nav-scroll-right"
+              title="Scroll Right"
+            >
+              <ChevronRight size={16} className="stroke-[2.5]" />
+            </button>
+
           </div>
         </div>
       </nav>
 
       {/* COMPONENT BODY VIEWPORT */}
-      <main className="max-w-7xl mx-auto p-6 space-y-6" id="trader-dashboard-content">
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4 md:space-y-6" id="trader-dashboard-content">
         
-        {/* GLOBAL DYNAMIC SPOT CONTROL & ANALYSIS TRIGGER BAR */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 shadow-xs" id="global-dynamic-action-bar">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl flex items-center justify-center">
-              <Target size={18} />
+        {/* INTRO AND PRODUCT GUIDE PAGE */}
+        {activePage === "intro" && (
+          <div className="space-y-8 animate-fade-in" id="intro-page-container">
+            {/* HERO HERO CONTAINER */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-indigo-950 text-white rounded-3xl p-6 md:p-10 shadow-lg border border-slate-800 relative overflow-hidden" id="intro-hero">
+              <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none transform translate-y-12 translate-x-12">
+                <BrainCircuit size={400} />
+              </div>
+              <div className="relative z-10 max-w-3xl space-y-4">
+                <div className="inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700/60 px-3.5 py-1 rounded-full text-xs font-mono font-bold text-orange-400">
+                  <Sparkles size={12} className="animate-pulse" />
+                  <span>PREMIUM ANALYST PLATFORM</span>
+                </div>
+                <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight font-sans text-white leading-tight">
+                  Welcome to ASHTEK <br />
+                  <span className="bg-gradient-to-r from-orange-400 via-rose-400 to-sky-400 bg-clip-text text-transparent">Smart Money Analyst Suite</span>
+                </h1>
+                <p className="text-slate-300 text-sm sm:text-base leading-relaxed font-sans max-w-2xl">
+                  Decrypt and track institutional footprints with real-time derivative calculators, implied volatility metrics, and rule-based option buyer alerts. Built for precision-focused quantitative market analysts.
+                </p>
+                <div className="pt-4 flex flex-wrap gap-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage("dashboard");
+                      setAnalystActiveTool("option-chain");
+                      setAnalystShowDirectory(true);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="px-6 py-3 bg-white hover:bg-slate-100 text-slate-950 font-bold rounded-xl transition-all shadow-md hover:scale-[1.02] active:scale-98 cursor-pointer text-sm font-sans flex items-center gap-2"
+                    id="btn-intro-launch"
+                  >
+                    <Play size={16} className="fill-current" />
+                    <span>Launch Analyst Hub</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage("vix");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="px-6 py-3 bg-slate-800 hover:bg-slate-750 text-white border border-slate-700/60 font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-98 cursor-pointer text-sm font-sans flex items-center gap-2"
+                  >
+                    <span>Check India VIX Guide</span>
+                  </button>
+                </div>
+              </div>
             </div>
-            <div>
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono flex items-center gap-2">
-                <span>Asset Spot Price &amp; Quantitative Trigger</span>
-                <span className="text-[9px] bg-sky-100 text-sky-800 border border-sky-200 px-1.5 py-0.5 rounded font-bold font-mono tracking-wider">
-                  ACTIVE MODIFIER
+
+            {/* WHAT IS ASHTEK SMART MONEY SECTION */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 space-y-6 shadow-2xs" id="intro-philosophy">
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  <BrainCircuit size={20} className="text-indigo-600" />
+                  <span>What is ASHTEK Smart Money?</span>
+                </h2>
+                <div className="h-0.5 w-16 bg-indigo-600 rounded" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 text-slate-650 text-sm leading-relaxed font-sans">
+                <div className="md:col-span-7 space-y-4">
+                  <p>
+                    <strong>ASHTEK Smart Money</strong> is a high-fidelity quantitative research and analysis platform designed to decrypt institutional market participants' positions (often referred to as <em>"Smart Money Footprints"</em>) across major equity indices and derivatives.
+                  </p>
+                  <p>
+                    Institutions, proprietary desks, and foreign portfolio investors (FPIs/FIIs) control the vast majority of market liquidity. By analyzing the mathematical parameters of option chains—such as PCR (Put-Call Ratio), Cumulative Open Interest (COI) shifts, and Implied Volatility (IV) crushes—this platform helps retail analysts align their trades with institutional momentum rather than fighting against it.
+                  </p>
+                  <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl text-xs text-slate-650 font-mono relative pl-10">
+                    <span className="absolute left-3 top-4 text-indigo-500 font-extrabold text-lg">💡</span>
+                    The platform enforces safe, mathematical filters. For example, it prevents buying naked options during extremely high premium/high-VIX regimes, and triggers alerts only when long straddles are statistically cheap.
+                  </div>
+                </div>
+                <div className="md:col-span-5 bg-slate-900 text-slate-100 rounded-xl p-5 space-y-4 border border-slate-800 shadow-inner">
+                  <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase font-mono">
+                    System Core Philosophy
+                  </h3>
+                  <ul className="space-y-3.5 text-xs font-sans">
+                    <li className="flex gap-3">
+                      <span className="text-emerald-400 font-bold shrink-0">✓</span>
+                      <div>
+                        <strong className="text-white block">Safe &amp; Analytical</strong>
+                        No guesswork. Every tool is backed by hard mathematical formulas and live index spot tracking.
+                      </div>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="text-emerald-400 font-bold shrink-0">✓</span>
+                      <div>
+                        <strong className="text-white block">Anti-Volatility Crush</strong>
+                        Avoid the classic mistake of buying overpriced options right before a volatility drop.
+                      </div>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="text-emerald-400 font-bold shrink-0">✓</span>
+                      <div>
+                        <strong className="text-white block">Pure Transparency</strong>
+                        Clean, high-fidelity quantitative menus without complex, unrequested clutter.
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* QUICK-ACCESS DIRECTORY OF FEATURES */}
+            <div className="space-y-4" id="intro-features-grid">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                    Explore Analyst Tools &amp; Features
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Jump straight to any specific feature of the suite below
+                  </p>
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 font-bold bg-slate-100 border border-slate-200 px-2 py-1 rounded">
+                  15 ANALYTICAL VIEWS
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* CARD 1: Analyst Option Chain & Directory */}
+                <div 
+                  onClick={() => {
+                    setActivePage("dashboard");
+                    setAnalystActiveTool("option-chain");
+                    setAnalystShowDirectory(true);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-sky-50 text-sky-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <LineChart size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>Analyst Hub (Option Chain)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Analyze the full options ledger, PCR ratios, and open interest spikes. Paste text or fetch live data.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-650 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Enter Hub</span>
+                    <span>→</span>
+                  </span>
+                </div>
+
+                {/* CARD 2: India VIX Volatility Guard */}
+                <div 
+                  onClick={() => {
+                    setActivePage("vix");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-purple-50 text-purple-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <Sliders size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>India VIX Volatility Guard</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Enforces hard mathematical buy filters. Learn when to buy ATM straddles, execute hedged spreads, or block buy orders.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-655 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Open VIX Guide</span>
+                    <span>→</span>
+                  </span>
+                </div>
+
+                {/* CARD 3: ATM Straddle Alert Bot */}
+                <div 
+                  onClick={() => {
+                    setActivePage("atm");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <Target size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>ATM Straddle Alert Engine</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Rule-based alert mechanism for option buyers. Triggers only when VIX &lt; 14, Straddles are cheap (SMA-10), and events are near.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-650 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Open Straddle Alerts</span>
+                    <span>→</span>
+                  </span>
+                </div>
+
+                {/* CARD 4: Seller Panic & Crash Sentinel */}
+                <div 
+                  onClick={() => {
+                    setActivePage("seller-panic");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-amber-50 text-amber-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <Flame size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>Seller Panic Sentinel</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Track when option writers start panic unwinding their short-calls or short-puts, setting up extreme rapid trend moves.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-650 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Open Sentinel</span>
+                    <span>→</span>
+                  </span>
+                </div>
+
+                {/* CARD 5: FII & DII Institutional Flows */}
+                <div 
+                  onClick={() => {
+                    setActivePage("fiidii");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <BarChart3 size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>FII / DII Flow Analysis</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Investigate buy/sell net investments of Foreign Institutional Investors and Domestic Institutional Investors in cash &amp; F&amp;O.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-650 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Open Flow Analysis</span>
+                    <span>→</span>
+                  </span>
+                </div>
+
+                {/* CARD 6: Tactical Wealth Planning */}
+                <div 
+                  onClick={() => {
+                    setActivePage("wealth");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="bg-white border border-slate-200 hover:border-slate-350 p-5 rounded-2xl transition-all shadow-3xs hover:shadow-xs group cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="p-2 w-9 h-9 bg-teal-50 text-teal-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-all">
+                      <Briefcase size={16} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm font-sans flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
+                      <span>Tactical Wealth &amp; SIP</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Simulate compound wealth accumulators, dynamic SIP schedules, and long-term asset allocation based on Nifty valuations.
+                    </p>
+                  </div>
+                  <span className="text-[10.5px] font-mono font-extrabold text-indigo-650 group-hover:translate-x-1 inline-flex items-center gap-1 transition-all">
+                    <span>Open Planner</span>
+                    <span>→</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* INTEGRITY STATUS BAR */}
+            <div className="bg-slate-100 border border-slate-200 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3 text-xs font-mono text-slate-600">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
+                <span className="font-bold text-slate-700">SYSTEM INTEGRITY: SECURE</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span>Database: <strong className="text-slate-800">Firestore Sandbox</strong></span>
+                <span>API Gateway: <strong className="text-slate-800">Secure Proxy</strong></span>
+                <span>Environment: <strong className="text-indigo-600">Production Live</strong></span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DYNAMIC DASHBOARD PAGE VIEW - Now placed at the very top as requested! */}
+        {activePage === "dashboard" && (
+          <AnalystHub 
+            optionChain={optionChain}
+            spotPrice={spotPrice}
+            onUpdateOptionChain={setOptionChain}
+            onResetChain={handleResetDefaultData}
+            selectedSymbol={selectedSymbol}
+            isFetchingLive={liveFetching}
+            nseTimestamp={nseTimestamp}
+            isLiveFeedSimulated={isLiveFeedSimulated}
+            onRefreshLive={() => handleFetchLiveNseData(selectedSymbol)}
+            fiiDii={fiiDii}
+            onUpdateFiiDii={setFiiDii}
+            indicesStatus={indicesStatus}
+            activeTool={analystActiveTool}
+            setActiveTool={setAnalystActiveTool}
+            report={report}
+            loading={loading}
+            showDirectory={analystShowDirectory}
+            onToggleShowDirectory={setAnalystShowDirectory}
+          />
+        )}
+
+        {/* GLOBAL DYNAMIC SPOT CONTROL & ANALYSIS TRIGGER BAR - Moved down below the Tools Suite! */}
+        {activePage !== "intro" && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 shadow-xs" id="global-dynamic-action-bar">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl flex items-center justify-center">
+                <Target size={18} />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono flex items-center gap-2">
+                  <span>Asset Spot Price &amp; Quantitative Trigger</span>
+                  <span className="text-[9px] bg-sky-100 text-sky-800 border border-sky-200 px-1.5 py-0.5 rounded font-bold font-mono tracking-wider">
+                    ACTIVE MODIFIER
+                  </span>
+                </h3>
+                <p className="text-[10.5px] text-slate-500 font-medium font-sans">
+                  Recalculate entire mathematical option model parameters and AI intelligence in real-time.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Spot price input box */}
+              <div className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-mono group focus-within:border-emerald-500 transition-colors shadow-2xs" id="spot-indicator">
+                <span className="text-slate-500 font-semibold" id="lbl-index-spot-name">
+                  {selectedSymbol === "NIFTY" ? "NIFTY 50 ATM SPOT" : `${selectedSymbol} ATM SPOT`}:
                 </span>
-              </h3>
-              <p className="text-[10.5px] text-slate-500 font-medium font-sans">
-                Recalculate entire mathematical option model parameters and AI intelligence in real-time.
-              </p>
+                <input 
+                  type="number"
+                  className="bg-transparent text-emerald-700 font-extrabold w-24 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  value={spotPrice}
+                  onChange={(e) => setSpotPrice(parseFloat(e.target.value) || 0)}
+                  step="0.05"
+                />
+              </div>
+
+              {/* Run Analysis Trigger */}
+              <button
+                type="button"
+                onClick={handleRunAnalysis}
+                disabled={loading}
+                className="px-5 py-2.5 bg-black hover:bg-slate-850 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm active:scale-98 flex items-center gap-2 cursor-pointer border border-transparent"
+                id="btn-trigger-ai-analysis"
+              >
+                <Sparkles size={14} className={`text-amber-400 ${loading ? "animate-spin" : ""}`} />
+                <span>{loading ? "Analyzing..." : "Generate Derivatives Intelligence"}</span>
+              </button>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Spot price input box */}
-            <div className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-mono group focus-within:border-emerald-500 transition-colors shadow-2xs" id="spot-indicator">
-              <span className="text-slate-500 font-semibold" id="lbl-index-spot-name">
-                {selectedSymbol === "NIFTY" ? "NIFTY 50 ATM SPOT" : `${selectedSymbol} ATM SPOT`}:
-              </span>
-              <input 
-                type="number"
-                className="bg-transparent text-emerald-700 font-extrabold w-24 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                value={spotPrice}
-                onChange={(e) => setSpotPrice(parseFloat(e.target.value) || 0)}
-                step="0.05"
-              />
-            </div>
-
-            {/* Run Analysis Trigger */}
-            <button
-              type="button"
-              onClick={handleRunAnalysis}
-              disabled={loading}
-              className="px-5 py-2.5 bg-black hover:bg-slate-850 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm active:scale-98 flex items-center gap-2 cursor-pointer border border-transparent"
-              id="btn-trigger-ai-analysis"
-            >
-              <Sparkles size={14} className={`text-amber-400 ${loading ? "animate-spin" : ""}`} />
-              <span>{loading ? "Analyzing..." : "Generate Derivatives Intelligence"}</span>
-            </button>
-          </div>
-        </div>
+        )}
         
         {/* Error notification banner */}
         {errorStatus && (
@@ -913,84 +1634,35 @@ export default function App() {
           </div>
         )}
 
-        {/* Real-time Ticking Indices HUD */}
-        {activePage === "dashboard" && (
-          <>
-            <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm animate-fade-in" id="realtime-market-ticker">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-4">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <h2 className="text-[11.5px] font-extrabold text-slate-800 uppercase tracking-wider font-mono">
-                    Live Server-Side Market Benchmarks Status
-                  </h2>
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-2">
-                  <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded text-[9.5px] font-bold">💡 Double-click or click ✏️ to set exact price</span>
-                  <span className="text-slate-200">|</span>
-                  <span><span className="text-emerald-500">●</span> Live Sync: {indicesStatus?.timestamp ? new Date(indicesStatus.timestamp).toLocaleTimeString() : "Syncing..."}</span>
-                </div>
+
+
+        {/* OLD DASHBOARD PAGE VIEW */}
+        {false && activePage === "dashboard" && (
+          <div className="space-y-6">
+            
+            {/* ATM COI HEATMAP ACCUMULATION HEATMAP - FULL WIDTH CENTER */}
+            <div id="atom-coi-live-tracker-full" className="animate-fade-in">
+              <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
+            </div>
+
+            {/* LIVE MARKET SENTINEL & INSTITUTIONAL FLOWS GAUGE SIDE-BY-SIDE */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in" id="vix-fiidii-signals-row">
+              {/* LIVE MARKET IMPLIED VOLATILITY (VIX) - LEFT GAUGE */}
+              <div className="lg:col-span-5" id="india-vix-tracker-full">
+                <IndiaVixTracker indicesStatus={indicesStatus} />
               </div>
 
-              <div className="space-y-4">
-                {/* Domestic Indices */}
-                <div>
-                  <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-indigo-600/90 uppercase tracking-widest mb-2 font-mono">
-                    <span>🇮🇳 Domestic Indices (भारतीय सूचकांक)</span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                    {indicesStatus ? (
-                      Object.entries(indicesStatus)
-                        .filter(([key]) => ["nifty", "sensex", "banknifty", "finnifty", "midcapnifty"].includes(key))
-                        .map(([key, item]: any) => renderIndexCard(key, item))
-                    ) : (
-                      Array.from({ length: 5 }).map((_, idx) => (
-                        <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
-                          <div className="h-3 w-16 bg-slate-200 rounded" />
-                          <div className="h-4 w-24 bg-slate-200 rounded" />
-                          <div className="h-2 w-12 bg-slate-200 rounded" />
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Global/International Indices */}
-                <div>
-                  <div className="flex items-center gap-1.5 text-[9.5px] font-extrabold text-slate-550 uppercase tracking-widest mb-2 font-mono pt-1">
-                    <span>🌐 Global Benchmarks & GIFT Nifty (वैश्विक सूचकांक)</span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                    {indicesStatus ? (
-                      Object.entries(indicesStatus)
-                        .filter(([key]) => ["giftnifty", "dowjones", "nasdaq", "nikkei", "hangseng"].includes(key))
-                        .map(([key, item]: any) => renderIndexCard(key, item))
-                    ) : (
-                      Array.from({ length: 5 }).map((_, idx) => (
-                        <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl h-20 animate-pulse flex flex-col justify-between">
-                          <div className="h-3 w-16 bg-slate-200 rounded" />
-                          <div className="h-4 w-24 bg-slate-200 rounded" />
-                          <div className="h-2 w-12 bg-slate-200 rounded" />
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
+              {/* INSTITUTIONAL ACTIVITY RECORDS (FII DII) - RIGHT LEDGER */}
+              <div className="lg:col-span-7" id="fii-dii-tracker-full">
+                <FiiDiiPanel 
+                  fiiDii={fiiDii}
+                  onUpdateFiiDii={setFiiDii}
+                  spotPrice={spotPrice}
+                />
               </div>
-            </section>
+            </div>
 
-            {/* LIVE PRICE ACTION & LEVELS ALERT SENTINEL */}
-            <section id="price-action-alerts-sentinel-section">
-              <PriceActionAlertManager indicesStatus={indicesStatus} />
-            </section>
-          </>
-        )}
-
-        {/* DYNAMIC DASHBOARD PAGE VIEW */}
-        {activePage === "dashboard" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-columns-layout">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-columns-layout">
             
             {/* LEFT MAIN COLUMNS - 8 SPANS */}
             <div className="lg:col-span-8 space-y-6" id="dashboard-left-panel">
@@ -998,8 +1670,8 @@ export default function App() {
               {/* TOP ROW bento grids: CLIPBOARD PASTE + VISUAL OI CHART */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6" id="overview-bento-grid">
                 
-                {/* Clipboard & Multi-Format Options Loader - 5 columns */}
-                <div className="md:col-span-5 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between" id="clipboard-panel">
+                {/* Clipboard & Multi-Format Options Loader is now moved to the secure Admin Panel modal. Hidden here on the main dashboard to maintain a clean layout. */}
+                <div className="hidden" id="clipboard-panel">
             <div>
               {/* LIVE NSE Master Control Switch */}
               <div className={`mb-4 border rounded-xl p-3.5 space-y-2 transition-all duration-300 ${
@@ -1253,12 +1925,37 @@ export default function App() {
                     Sensibull ya bank/nifty option table clipboard se copy karke yahan paste karein. AI will auto-structure open interest levels!
                   </p>
                   <textarea
-                    placeholder="Paste raw Option Chain or Institutional text data here..."
+                    placeholder="Paste raw Option Chain / CSV / Sensibull text data OR directly paste a screenshot (Ctrl+V) here..."
                     className="w-full h-36 bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-lg p-2.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-400"
                     value={rawPasteText}
                     onChange={(e) => {
                       setRawPasteText(e.target.value);
                       setUseRawPaste(e.target.value.trim().length > 0);
+                    }}
+                    onPaste={async (e) => {
+                      const items = e.clipboardData?.items;
+                      if (items) {
+                        for (let i = 0; i < items.length; i++) {
+                          if (items[i].type.indexOf("image") !== -1) {
+                            const file = items[i].getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              const reader = new FileReader();
+                              reader.onload = async (event) => {
+                                const base64 = event.target?.result as string;
+                                setSelectedImage(base64);
+                                setImageMimeType(file.type);
+                                setUploadedFileName("Pasted Clipboard Screenshot (" + new Date().toLocaleTimeString() + ")");
+                                setActiveUploadTab("image");
+                                setParseSuccessMessage("क्लिपबोर्ड से इमेज डिटेक्ट हो गई है! Gemini 3.5 Vision AI से ऑप्शन चेन रीढ़ (Read) किया जा रहा है...");
+                                await parseImageWithGemini(base64, file.type);
+                              };
+                              reader.readAsDataURL(file);
+                              break;
+                            }
+                          }
+                        }
+                      }
                     }}
                   />
                   {useRawPaste && (
@@ -1449,16 +2146,27 @@ export default function App() {
             </div>
           </div>
 
-          {/* Recharts Visual Bar Chart of Open Interest Concentration - 7 columns */}
-          <div className="md:col-span-7 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between animate-fade-in" id="oi-histogram-panel">
+          {/* Recharts Visual Bar Chart of Open Interest Concentration - Now spans full width for gorgeous presentation */}
+          <div className="md:col-span-12 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between animate-fade-in" id="oi-histogram-panel">
             <div>
-              <div className="flex items-center justify-between mb-3 text-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-slate-700">
                 <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest font-mono flex items-center gap-1.5">
                   <BarChart3 size={15} className="text-emerald-600" /> Visual Open Interest (OI) concentration
                 </h3>
-                <span className="text-[11px] font-semibold text-slate-500">
-                  Total Strikes Analyzed: {optionChain.length}
-                </span>
+                <div className="flex items-center gap-2">
+                  {isAdminLoggedIn && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAdminPanelOpen(true)}
+                      className="text-[10.5px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded-md border border-indigo-100 cursor-pointer transition-colors font-mono"
+                    >
+                      ⚙️ Open Admin Panel
+                    </button>
+                  )}
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    Total Strikes Analyzed: {optionChain.length}
+                  </span>
+                </div>
               </div>
 
               {/* Bar Chart Container */}
@@ -1552,39 +2260,9 @@ export default function App() {
                 selectedSymbol={selectedSymbol} 
               />
 
-              {/* LIVE COI TRACKER HEATMAP */}
-              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="atom-coi-live-tracker">
-                <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-wider font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  <span>ATM COI Heatmap (buildup tracker)</span>
-                </div>
-                <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
-              </section>
-
-              {/* IMPLIED VOLATILITY (VIX) TRACKER CARD */}
-              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="india-vix-analysis-section">
-                <div className="flex items-center gap-2 text-sky-700 font-bold text-xs uppercase tracking-wider font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
-                  <span>Live Market Implied Volatility Index</span>
-                </div>
-                <IndiaVixTracker indicesStatus={indicesStatus} />
-              </section>
-
-              {/* INSTITUTIONAL ACTIVITY RECORDS (FII DII) */}
-              <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-5 shadow-sm" id="fii-dii-grid">
-                <div className="flex items-center gap-2 text-amber-700 font-bold text-xs uppercase tracking-wider font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  <span>Institutional Flow Index Activity Bias</span>
-                </div>
-                <FiiDiiPanel 
-                  fiiDii={fiiDii}
-                  onUpdateFiiDii={setFiiDii}
-                  spotPrice={spotPrice}
-                />
-              </section>
-
             </div>
 
+          </div>
           </div>
         )}
 
@@ -1621,46 +2299,78 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-8 bg-white border border-slate-200/80 p-6 rounded-2xl shadow-xs space-y-4">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <Layers size={16} className="text-rose-605" />
-                  <span className="font-bold text-sm text-slate-800">ATM Option Strike Open Interest concentration Heatmap</span>
-                </div>
-                <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
+            {/* ATM SUB-HEADER TABS */}
+            <div className="flex items-center gap-2 border-b border-slate-200/80 pb-1.5" id="atm-sub-header-tabs">
+              <button
+                type="button"
+                onClick={() => setAtmSubTab("straddle")}
+                className={`pb-2 px-4.5 text-xs font-black font-mono border-b-2 transition-all cursor-pointer ${
+                  atmSubTab === "straddle"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                📊 Auto ATM Long Straddle Dashboard
+              </button>
+              <button
+                type="button"
+                onClick={() => setAtmSubTab("coi")}
+                className={`pb-2 px-4.5 text-xs font-black font-mono border-b-2 transition-all cursor-pointer ${
+                  atmSubTab === "coi"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                🔥 ATM Live Accumulation Heatmap
+              </button>
+            </div>
+
+            {atmSubTab === "straddle" ? (
+              <div className="animate-fade-in" id="atm-straddle-subview">
+                <LongStraddleDashboard />
               </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in" id="atm-coi-subview">
+                <div className="lg:col-span-8 bg-white border border-slate-200/80 p-6 rounded-2xl shadow-xs space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Layers size={16} className="text-rose-605" />
+                    <span className="font-bold text-sm text-slate-800">ATM Option Strike Open Interest concentration Heatmap</span>
+                  </div>
+                  <AtmCoiTracker optionChain={optionChain} spotPrice={spotPrice} />
+                </div>
 
-              <div className="lg:col-span-4 space-y-6">
-                <div className="bg-white border border-slate-200/80 p-5 rounded-2xl shadow-xs space-y-4">
-                  <h3 className="font-bold text-xs uppercase text-rose-700 tracking-wider font-mono flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                    ATM Premium Matrix Guidelines
-                  </h3>
-                  <div className="space-y-3.5 text-xs text-slate-600">
-                    <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl leading-relaxed">
-                      <p className="font-bold text-slate-800 font-mono">1. Straddle Symmetry Bias</p>
-                      <p className="mt-1">
-                        Equal distribution of CE &amp; PE COI implies high operator confidence in a range-bound consolidation session.
-                      </p>
-                    </div>
+                <div className="lg:col-span-4 space-y-6">
+                  <div className="bg-white border border-slate-200/80 p-5 rounded-2xl shadow-xs space-y-4">
+                    <h3 className="font-bold text-xs uppercase text-rose-700 tracking-wider font-mono flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                      ATM Premium Matrix Guidelines
+                    </h3>
+                    <div className="space-y-3.5 text-xs text-slate-600">
+                      <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl leading-relaxed">
+                        <p className="font-bold text-slate-800 font-mono">1. Straddle Symmetry Bias</p>
+                        <p className="mt-1">
+                          Equal distribution of CE &amp; PE COI implies high operator confidence in a range-bound consolidation session.
+                        </p>
+                      </div>
 
-                    <div className="p-3 bg-red-50/50 border border-red-200/50 rounded-xl leading-relaxed">
-                      <p className="font-bold text-red-900 font-mono">2. Call Accumulation Bias</p>
-                      <p className="mt-1">
-                        Huge accumulation on Call COI warns that the current strike is acting as a solid barrier. Break up requires strong force.
-                      </p>
-                    </div>
+                      <div className="p-3 bg-red-50/50 border border-red-200/50 rounded-xl leading-relaxed">
+                        <p className="font-bold text-red-900 font-mono">2. Call Accumulation Bias</p>
+                        <p className="mt-1">
+                          Huge accumulation on Call COI warns that the current strike is acting as a solid barrier. Break up requires strong force.
+                        </p>
+                      </div>
 
-                    <div className="p-3 bg-emerald-50/50 border border-emerald-200/50 rounded-xl leading-relaxed">
-                      <p className="font-bold text-emerald-900 font-mono">3. Put Accumulation Bias</p>
-                      <p className="mt-1">
-                        PUT COI building rapidly shows direct institutional floor defense. Strong base build-up indicates bullish support.
-                      </p>
+                      <div className="p-3 bg-emerald-50/50 border border-emerald-200/50 rounded-xl leading-relaxed">
+                        <p className="font-bold text-emerald-900 font-mono">3. Put Accumulation Bias</p>
+                        <p className="mt-1">
+                          PUT COI building rapidly shows direct institutional floor defense. Strong base build-up indicates bullish support.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1772,6 +2482,33 @@ export default function App() {
           </div>
         )}
 
+        {/* PAGE INDEX: INDEX ADVANCED CHARTING VIEW */}
+        {activePage === "index" && (
+          <div className="space-y-6 animate-fade-in" id="index-chart-view-tab">
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-6 shadow-xs">
+              <div className="border-b border-slate-100 pb-3 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider font-mono flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
+                    Advanced Index Charting Terminal
+                  </h2>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Monitor live price trends, technical breakouts, and intraday indicators with advanced TradingView widgets.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-1 rounded-md font-bold font-mono text-slate-700">
+                    SYMBOL: {selectedSymbol}
+                  </span>
+                </div>
+              </div>
+              <div className="h-[480px] w-full" id="index-embedded-chart">
+                <IndexChartViewer initialSymbol={selectedSymbol} />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* PAGE 5.2: STRATEGY SIMULATOR TAB */}
         {activePage === "strategy" && (
           <div className="space-y-6 animate-fade-in" id="strategy-simulator-view-tab">
@@ -1813,17 +2550,132 @@ export default function App() {
         {/* PAGE 5.5: INSTITUTIONAL FLOWS FII/DII PANEL */}
         {activePage === "fiidii" && (
           <div className="space-y-6 animate-fade-in" id="fiidii-flows-view-tab">
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-4" id="fiidii-standalone-card">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-3 text-emerald-800 font-extrabold text-sm uppercase tracking-wider font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
-                <span>FII/DII Institutional Flow Ledger</span>
-              </div>
-              <FiiDiiPanel 
-                fiiDii={fiiDii}
-                onUpdateFiiDii={setFiiDii}
-                spotPrice={spotPrice}
+            <FiiDiiPanel 
+              fiiDii={fiiDii}
+              onUpdateFiiDii={setFiiDii}
+              spotPrice={spotPrice}
+            />
+          </div>
+        )}
+
+        {/* WEALTH MANAGEMENT PORTFOLIO ALLOCATION PANEL */}
+        {activePage === "wealth" && (
+          <div className="space-y-6 animate-fade-in" id="wealth-management-view-tab">
+            <WealthManagement />
+          </div>
+        )}
+
+        {/* SIP SYSTEMATIC COMPOUNDING INVESTING LESSONS & SIMULATORS */}
+        {activePage === "sip" && (
+          <div className="space-y-6 animate-fade-in" id="sip-compounding-view-tab">
+            <SipCompounding />
+          </div>
+        )}
+
+        {/* STEP-UP & MANUAL SIP COMPOUND CALCULATOR TABLE ENGINE */}
+        {activePage === "sip-calc" && (
+          <div className="space-y-6 animate-fade-in" id="sip-calculator-view-tab">
+            <SipCalculator />
+          </div>
+        )}
+
+        {/* QUANTITATIVE ADMIN CONTROL CONSOLE (FULL-PAGE DASHBOARD) */}
+        {activePage === "admin" && (
+          <div className="space-y-6 animate-fade-in" id="admin-page-tab">
+            {isAdminLoggedIn ? (
+              <AdminDashboard 
+                isLiveNseDisabled={isLiveNseDisabled}
+                setIsLiveNseDisabled={setIsLiveNseDisabled}
+                autoRefresh={autoRefresh}
+                setAutoRefresh={setAutoRefresh}
+                activeUploadTab={activeUploadTab}
+                setActiveUploadTab={setActiveUploadTab}
+                selectedSymbol={selectedSymbol}
+                handleFetchLiveNseData={handleFetchLiveNseData}
+                rawPasteText={rawPasteText}
+                setRawPasteText={setRawPasteText}
+                setUseRawPaste={setUseRawPaste}
+                handleParseAndLoadOptionChain={handleParseAndLoadOptionChain}
+                dragActive={dragActive}
+                setDragActive={setDragActive}
+                handleDrag={handleDrag}
+                handleDropCSV={handleDropCSV}
+                handleDropImage={handleDropImage}
+                handleCSVFileDropOrSelect={handleCSVFileDropOrSelect}
+                uploadedFileName={uploadedFileName}
+                setUploadedFileName={setUploadedFileName}
+                selectedImage={selectedImage}
+                setSelectedImage={setSelectedImage}
+                imageMimeType={imageMimeType}
+                setImageMimeType={setImageMimeType}
+                imageParsing={imageParsing}
+                parseImageWithGemini={parseImageWithGemini}
+                handleResetDefaultData={handleResetDefaultData}
+                setParseSuccessMessage={setParseSuccessMessage}
+                setErrorStatus={setErrorStatus}
+                setIsAdminLoggedIn={setIsAdminLoggedIn}
+                setActivePage={setActivePage}
               />
-            </div>
+            ) : (
+              <div className="flex items-center justify-center py-12 px-4" id="admin-login-fullpage">
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl max-w-md w-full p-8 shadow-2xl relative overflow-hidden text-white">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+                  
+                  <div className="flex flex-col items-center text-center mt-2">
+                    <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 rounded-full mb-3">
+                      <Lock size={24} className="animate-pulse" />
+                    </div>
+                    <h3 className="text-lg font-bold font-mono tracking-wide">Admin Authentication Required</h3>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs font-sans leading-relaxed">
+                      AshTek Smart Money manual overrides are restricted to verified quantitative administrators.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleAdminLoginSubmit} className="mt-6 space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5 font-mono">
+                        Passcode / Secure PIN
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        autoFocus
+                        placeholder="Enter passcode... (Hint: 1234)"
+                        className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3 py-2.5 text-sm text-center font-mono text-white placeholder:text-slate-650 focus:outline-none"
+                        value={adminPin}
+                        onChange={(e) => setAdminPin(e.target.value)}
+                      />
+                    </div>
+
+                    {adminLoginError && (
+                      <div className="p-3 bg-red-950/40 border border-red-500/30 text-red-300 text-xs rounded-lg flex items-start gap-2">
+                        <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+                        <span>{adminLoginError}</span>
+                      </div>
+                    )}
+
+                    <div className="pt-2 flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePage("dashboard");
+                          setPendingPastedImage(null);
+                        }}
+                        className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 rounded-xl text-xs font-semibold text-slate-300 transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/30 rounded-xl text-xs font-semibold text-white shadow-md shadow-indigo-600/10 transition-colors cursor-pointer"
+                      >
+                        Unlock Console
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1854,7 +2706,7 @@ export default function App() {
 
       {/* FOOTER BAR */}
       <footer className="border-t border-slate-200 bg-white px-6 py-8 text-center text-xs text-slate-500 font-mono" id="main-footer">
-        <p>© 2026 AshTek Trader Pro. Designed for Quantitative Option Analytics and High-Fidelity Risk Management.</p>
+        <p>© 2026 AshTek Smart Money. Designed for Quantitative Option Analytics and High-Fidelity Risk Management.</p>
         <p className="mt-1 flex items-center justify-center gap-1 text-[10px] text-slate-400">
           <span>Powered by Gemini 3.5 AI</span> • <span>Non-directional &amp; Directional Spreads Engine</span>
         </p>
@@ -1867,6 +2719,132 @@ export default function App() {
         fiiDiiData={fiiDii}
         spotPrice={spotPrice}
       />
+
+      {/* 🚨 TRADING BOT SIGNAL ALERT POPUP MODAL 🚨 */}
+      {botAlert && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" id="bot-alert-overlay">
+          <div className="bg-slate-900 border-2 border-indigo-500 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl shadow-indigo-500/20" id="bot-alert-modal">
+            
+            {/* Header: Flashing signal beacon */}
+            <div className={`p-4 flex items-center justify-between border-b ${
+              botAlert.signal === "BUY_CE" 
+                ? "bg-gradient-to-r from-emerald-950 via-emerald-900 to-slate-900 border-emerald-500/30 text-emerald-400" 
+                : "bg-gradient-to-r from-rose-950 via-rose-900 to-slate-900 border-rose-500/30 text-rose-400"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="flex h-3 w-3 relative">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    botAlert.signal === "BUY_CE" ? "bg-emerald-400" : "bg-rose-400"
+                  }`}></span>
+                  <span className={`relative inline-flex rounded-full h-3 w-3 ${
+                    botAlert.signal === "BUY_CE" ? "bg-emerald-500" : "bg-rose-500"
+                  }`}></span>
+                </span>
+                <span className="text-xs font-black uppercase tracking-wider font-mono">
+                  🚨 LIVE SIGNAL TRIGGERED 🚨
+                </span>
+              </div>
+              <span className="text-[10px] font-mono opacity-85">
+                {new Date().toLocaleTimeString()}
+              </span>
+            </div>
+
+            {/* Signal Display Body */}
+            <div className="p-6 space-y-4">
+              
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 font-mono block">Action Type</span>
+                  <span className={`text-2xl font-black font-mono tracking-tight flex items-center gap-1.5 ${
+                    botAlert.signal === "BUY_CE" ? "text-emerald-400" : "text-rose-400"
+                  }`}>
+                    {botAlert.signal === "BUY_CE" ? (
+                      <>
+                        <TrendingUp size={22} className="stroke-[3]" />
+                        BUY CALL (CE)
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown size={22} className="stroke-[3]" />
+                        BUY PUT (PE)
+                      </>
+                    )}
+                  </span>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 font-mono block">Suggested Strike</span>
+                  <span className="text-2xl font-black text-white font-mono tracking-tight bg-slate-800 px-3 py-1 rounded-xl border border-slate-700/80">
+                    ₹{botAlert.suggested_strike}
+                  </span>
+                </div>
+              </div>
+
+              {/* Grid of quantitative details */}
+              <div className="grid grid-cols-2 gap-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                <div>
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Market Phase</span>
+                  <span className="text-xs font-bold text-slate-200 font-mono">
+                    {botAlert.market_phase || "Tactical Consolidation"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Trap State</span>
+                  <span className="text-xs font-bold text-slate-200 font-mono">
+                    {botAlert.trap_detected || "No Trap Detected"}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Risk Profile</span>
+                  <span className={`text-xs font-bold font-mono ${
+                    botAlert.risk?.toLowerCase() === "low" ? "text-emerald-400" : "text-yellow-400"
+                  }`}>
+                    {botAlert.risk || "Medium"}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Execution Expiry</span>
+                  <span className="text-xs font-bold text-indigo-400 font-mono">
+                    Nearest Weekly (DTE &gt;= 7)
+                  </span>
+                </div>
+              </div>
+
+              {/* Bot Reasoning in Mix Hindi/English */}
+              <div className="space-y-1 bg-indigo-500/5 border border-indigo-500/10 p-4 rounded-xl">
+                <span className="text-[9px] uppercase font-black tracking-wider text-indigo-400 font-mono block">AI ANALYSIS &amp; WHY TO BUY</span>
+                <p className="text-xs text-slate-350 leading-relaxed font-sans">
+                  {botAlert.reasoning}
+                </p>
+              </div>
+
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setBotAlert(null)}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl text-xs font-bold font-mono transition-colors cursor-pointer text-center"
+              >
+                Acknowledge &amp; Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // Direct navigation to Long Straddle / ATM Analyzer
+                  setActivePage("atm");
+                  setBotAlert(null);
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 border border-indigo-400/30 text-white rounded-xl text-xs font-bold font-mono transition-all duration-150 shadow-lg cursor-pointer text-center"
+              >
+                Go to Straddle Hub
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

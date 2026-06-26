@@ -91,9 +91,11 @@ export default function SellerPanicChatBot({
 
   // Premade fast questions
   const suggestionQueries = [
+    "Operator Fake Breakdown / Bear trap check karo",
+    "Expiry Day Smart Money traps and phases explain karo",
     "Kya abhi CALL Option (CE) buy karna safe hai?",
     "PUT Option (PE) buy karne ka koi setup dikh rha h?",
-    "Live Sellers panic index and levels check karo",
+    "Phase 5: Post-3:00 PM VWAP Pinning check karo",
     "FII or DII key sentiment data study karke batao"
   ];
 
@@ -226,11 +228,103 @@ export default function SellerPanicChatBot({
       const isBullet = line.trim().startsWith("-") || line.trim().startsWith("*");
       
       return (
-        <p key={i} className={`text-xs leading-relaxed ${isBullet ? "pl-3 text-slate-200 mt-1" : "mt-1.5 font-sans text-slate-150"}`}>
+        <p key={i} className={`text-xs leading-relaxed ${isBullet ? "pl-3 text-slate-200 mt-1" : "mt-1.5 font-sans text-slate-300"}`}>
           {parts.length > 1 ? parts : formattedLine}
         </p>
       );
     });
+  };
+
+  const renderMessageContent = (msg: Message) => {
+    const isAI = msg.role === "model";
+    if (!isAI) {
+      return <div className="whitespace-pre-line font-sans text-xs text-slate-200">{msg.text}</div>;
+    }
+
+    // Check if text is JSON
+    let isJson = false;
+    let parsed: any = null;
+    const trimmed = msg.text.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        parsed = JSON.parse(trimmed);
+        isJson = true;
+      } catch (e) {
+        isJson = false;
+      }
+    }
+
+    if (!isJson || !parsed) {
+      return (
+        <div className="whitespace-pre-line font-sans">
+          {renderMessageText(msg.text)}
+        </div>
+      );
+    }
+
+    // Beautiful UI card for JSON response
+    const signal = parsed.signal || "NO_TRADE";
+    const marketPhase = parsed.market_phase || "Unknown Phase";
+    const trapDetected = parsed.trap_detected || "None";
+    const reasoning = parsed.reasoning || "";
+    const suggestedStrike = parsed.suggested_strike || "N/A";
+    const risk = parsed.risk || "Medium";
+
+    let signalBadgeColor = "bg-slate-800 text-slate-400 border-slate-700";
+    let signalText = "NO TRADE ZONE";
+
+    if (signal === "BUY_CE" || signal.includes("BUY_CE") || signal.includes("CE")) {
+      signalBadgeColor = "bg-emerald-950/50 text-emerald-400 border-emerald-900/55";
+      signalText = "🟢 BUY CE ACTIVE";
+    } else if (signal === "BUY_PE" || signal.includes("BUY_PE") || signal.includes("PE")) {
+      signalBadgeColor = "bg-rose-950/50 text-rose-400 border-rose-900/55";
+      signalText = "🔴 BUY PE ACTIVE";
+    } else {
+      signalBadgeColor = "bg-amber-950/50 text-amber-400 border-amber-900/55";
+      signalText = "🟡 NO TRADE ZONE";
+    }
+
+    return (
+      <div className="space-y-3 font-sans py-1">
+        {/* Signal Banner */}
+        <div className={`p-2.5 rounded-lg border flex items-center justify-between ${signalBadgeColor}`}>
+          <div className="font-mono font-black tracking-wider text-xs flex items-center gap-1.5 uppercase">
+            {signalText}
+          </div>
+          <div className="text-[10px] uppercase font-mono font-bold tracking-tight bg-slate-900/60 px-2 py-0.5 rounded border border-white/5 shrink-0">
+            Risk: {risk}
+          </div>
+        </div>
+
+        {/* Grid: Phase & Trap */}
+        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/60">
+            <span className="text-slate-400 block mb-0.5">MARKET PHASE</span>
+            <span className="text-slate-200 font-bold block">{marketPhase}</span>
+          </div>
+          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/60">
+            <span className="text-slate-400 block mb-0.5">TRAP STATUS</span>
+            <span className={`font-bold block truncate ${trapDetected !== "None" && trapDetected !== "" ? "text-rose-400 animate-pulse" : "text-slate-300"}`}>
+              {trapDetected}
+            </span>
+          </div>
+        </div>
+
+        {/* Reasoning (Hinglish) */}
+        <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-1.5">
+          <span className="text-[9px] font-mono font-bold text-amber-400 uppercase tracking-wide block">SHIKAR DEV BLUEPRINT ANALYSIS:</span>
+          <p className="text-xs text-slate-200 leading-relaxed font-sans">{reasoning}</p>
+        </div>
+
+        {/* Suggested Strike */}
+        {suggestedStrike && suggestedStrike !== "N/A" && (
+          <div className="bg-slate-900/40 p-2 rounded border border-slate-800/40 flex items-center justify-between text-xs font-mono">
+            <span className="text-slate-400">RECOMMENDED STRIKE:</span>
+            <span className="text-amber-300 font-extrabold text-xs">₹{suggestedStrike}</span>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -252,7 +346,7 @@ export default function SellerPanicChatBot({
           }}
           className={`h-14 w-14 rounded-full shadow-2xl flex items-center justify-center text-white transition-all transform hover:scale-110 active:scale-95 border-2 ${
             isOpen 
-              ? "bg-slate-800 border-slate-700 hover:bg-slate-750" 
+              ? "bg-slate-800 border-slate-700 hover:bg-slate-700" 
               : "bg-rose-600 border-rose-500 hover:bg-rose-500 animate-pulse"
           }`}
           title="Open Options Shikar Bot Chat"
@@ -281,7 +375,7 @@ export default function SellerPanicChatBot({
           {/* Header section with live indicator indicator */}
           <div className="bg-slate-950 p-4 border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="p-1.5 bg-rose-550/10 rounded-lg border border-rose-900/30">
+              <div className="p-1.5 bg-rose-500/10 rounded-lg border border-rose-900/30">
                 <Bot className="text-rose-400" size={20} />
               </div>
               <div>
@@ -311,9 +405,9 @@ export default function SellerPanicChatBot({
           </div>
 
           {/* Real-time mini HUD indicator for quick sanity check */}
-          <div className="bg-slate-950/80 px-4 py-2 border-b border-slate-850 text-[10px] font-mono flex justify-between text-slate-400">
+          <div className="bg-slate-950/80 px-4 py-2 border-b border-slate-800 text-[10px] font-mono flex justify-between text-slate-400">
             <span> स्पॉट: <strong className="text-white">₹{niftyVal.toLocaleString()}</strong></span>
-            <span> VIX: <strong className={vixChange >= 0 ? "text-rose-450" : "text-emerald-400"}>{vixValue.toFixed(1)}%</strong></span>
+            <span> VIX: <strong className={vixChange >= 0 ? "text-rose-400" : "text-emerald-400"}>{vixValue.toFixed(1)}%</strong></span>
             <span> Panic CE: <strong className="text-emerald-400">{ceCoveringStrikes.length}</strong></span>
             <span> PE: <strong className="text-rose-400">{peCoveringStrikes.length}</strong></span>
           </div>
@@ -329,7 +423,7 @@ export default function SellerPanicChatBot({
                 >
                   <div className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-xs shadow ${
                     isAI 
-                      ? "bg-slate-955 border border-slate-800 text-slate-200" 
+                      ? "bg-slate-950 border border-slate-800 text-slate-200" 
                       : "bg-rose-950/30 text-rose-100 border border-rose-900/40"
                   }`}>
                     <div className="flex items-center justify-between gap-2 border-b border-slate-800/40 pb-1 mb-1 font-mono text-[9px] text-slate-400">
@@ -340,8 +434,8 @@ export default function SellerPanicChatBot({
                         {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                    <div className="whitespace-pre-line font-sans">
-                      {isAI ? renderMessageText(msg.text) : msg.text}
+                    <div>
+                      {renderMessageContent(msg)}
                     </div>
                   </div>
                 </div>
@@ -350,7 +444,7 @@ export default function SellerPanicChatBot({
 
             {isLoading && (
               <div className="flex justify-start">
-                <div className="bg-slate-955 border border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-400 flex items-center gap-2">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-400 flex items-center gap-2">
                   <span className="animate-spin h-3.5 w-3.5 border-2 border-rose-500 border-t-transparent rounded-full" />
                   <span className="font-mono text-[10px]">Shikar Dev calculation kar raha hai...</span>
                 </div>
@@ -375,7 +469,7 @@ export default function SellerPanicChatBot({
                   type="button"
                   onClick={() => handleSendMessage(query)}
                   disabled={isLoading}
-                  className="text-[11px] py-1.5 px-3 bg-slate-900/90 hover:bg-rose-950/40 border border-slate-750 hover:border-rose-500 text-slate-200 hover:text-rose-200 rounded-lg text-left transition-all duration-200 shadow-md font-sans cursor-pointer disabled:opacity-40 flex items-center gap-1.5 hover:shadow-rose-950/20 group max-w-full"
+                  className="text-[11px] py-1.5 px-3 bg-slate-900/90 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500 text-slate-200 hover:text-rose-200 rounded-lg text-left transition-all duration-200 shadow-md font-sans cursor-pointer disabled:opacity-40 flex items-center gap-1.5 hover:shadow-rose-950/20 group max-w-full"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-500 group-hover:bg-rose-400 shrink-0"></span>
                   <span className="truncate">{query}</span>
@@ -390,7 +484,7 @@ export default function SellerPanicChatBot({
               e.preventDefault();
               handleSendMessage();
             }}
-            className="p-3 bg-slate-950 border-t border-slate-850 flex items-center gap-2"
+            className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2"
           >
             <input
               type="text"
@@ -403,7 +497,7 @@ export default function SellerPanicChatBot({
             <button
               type="submit"
               disabled={isLoading || !inputMessage.trim()}
-              className="p-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-650 disabled:border-transparent text-white border border-rose-500 rounded-lg transition transform active:scale-95 flex items-center justify-center aspect-square"
+              className="p-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:border-transparent text-white border border-rose-500 rounded-lg transition transform active:scale-95 flex items-center justify-center aspect-square"
             >
               <Send size={14} />
             </button>

@@ -114,7 +114,7 @@ export default function AnalystReport({ report, loading }: AnalystReportProps) {
         <div className="lg:col-span-12 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800 text-xs items-center leading-relaxed">
           <AlertTriangle className="text-amber-600 flex-shrink-0 animate-pulse" size={18} />
           <div>
-            <span className="font-bold">Gemini API Dynamic Fallback Activated:</span> Gemini AI is currently at standard free-tier limit capacity. AshTek Trader's high-fidelity <span className="font-semibold text-amber-900">local math matrix engine</span> has executed instant fallback calculations so you get perfectly accurate Open Interest, PCR, Max Pain, and Spreads suggestions with zero interruption!
+            <span className="font-bold">Gemini API Dynamic Fallback Activated:</span> Gemini AI is currently at standard free-tier limit capacity. AshTek Smart Money's high-fidelity <span className="font-semibold text-amber-900">local math matrix engine</span> has executed instant fallback calculations so you get perfectly accurate Open Interest, PCR, Max Pain, and Spreads suggestions with zero interruption!
           </div>
         </div>
       )}

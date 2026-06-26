@@ -345,7 +345,7 @@ export default function IndexChartViewer({ initialSymbol }: { initialSymbol: str
             </div>
           </div>
 
-          <div className="w-full h-full flex-1 flex flex-col" id="tradingview-widget-container">
+          <div className="w-full h-[450px] sm:h-full flex-1 flex flex-col" id="tradingview-widget-container">
             <div id="tradingview-advanced-chart" className="w-full h-full flex-1" />
           </div>
         </main>
