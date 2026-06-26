@@ -7,7 +7,7 @@ let fallbackUntil = 0;
 
 // ---------- 1. CONSTANTS (आपका Permanent System Prompt) ----------
 const SYSTEM_PROMPT = `
-तुम "AshTek Options Shikar Dev (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
+तुम "AshTek Fire AI (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
 
 तुम्हारे विश्लेषण के मुख्य 3 स्तंभ (नियम):
 1. 5-Phase Expiry Trap Cycle (एक्सपायरी का खेल):
@@ -197,13 +197,14 @@ export const runAutoTradingBot = async (liveCache: any) => {
         }
       } catch (err: any) {
         lastError = err;
-        console.warn(`⚠️ [Trading Bot] Model ${modelName} failed or busy. Error: ${err.message || err}`);
+        const errMsg = ((err.message || "") + " " + JSON.stringify(err)).toLowerCase();
         
         // If it's a quota / rate limit / 429 error, don't try other models. They will all fail anyway!
-        const errMsg = ((err.message || "") + " " + JSON.stringify(err)).toLowerCase();
         if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
-          console.log("🛑 Quota limit detected. Aborting model rotation to save system overhead.");
+          console.log(`ℹ️ [Trading Bot] Model ${modelName} hit Gemini API limit or quota. Switching immediately to fallback engine to respect free-tier constraints.`);
           break; // Break the model loop immediately
+        } else {
+          console.warn(`⚠️ [Trading Bot] Model ${modelName} failed or busy. Error: ${err.message || err}`);
         }
       }
     }

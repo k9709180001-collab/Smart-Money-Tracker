@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Bot, MessageSquare, Send, X, RefreshCw, Sparkles, ChevronDown, 
-  ChevronUp, Zap, HelpCircle, ArrowRight, TrendingUp, AlertTriangle 
+  ChevronUp, Zap, HelpCircle, ArrowRight, TrendingUp, AlertTriangle,
+  Mic, MicOff
 } from "lucide-react";
 import { OptionChainRow, FiiDiiData } from "../types";
 
@@ -30,13 +31,72 @@ export default function SellerPanicChatBot({
     {
       id: "initial-greet",
       role: "model",
-      text: "Arre bhai! Main hoon aapka **AshTek Option Shikar Dev** 🐯! Main live market metrics, dynamic option writing changes aur FII/DII patterns ko scan karke tactical option buying guide karta hoon.\n\nOption seller ek shatir player hota hai. Jab tak market rest mode pe hai, hum trade nahi karenge. Par jaise hi parameters cover hone lagen, hum momentum pakadenge! Aap kya check karna chahte hain?",
+      text: "Arre bhai! Main hoon aapka **AshTek Fire AI** 🔥! Main live market metrics, dynamic option writing changes aur FII/DII patterns ko scan karke tactical option buying guide karta hoon.\n\nOption seller ek shatir player hota hai. Jab tak market rest mode pe hai, hum trade nahi karenge. Par jaise hi parameters cover hone lagen, hum momentum pakadenge! Aap kya check karna chahte hain?",
       timestamp: new Date()
     }
   ]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [hasNewMessageAlert, setHasNewMessageAlert] = useState(false);
+  
+  // Voice Input (Speech to Text) Support
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = "hi-IN"; // Hindustani / Hindi / Hinglish friendly
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInputMessage((prev) => prev ? prev + " " + transcript : transcript);
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech Recognition Error:", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+    };
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert("Aapka browser voice typing support nahi karta ya microphone permission nahi di gayi hai.");
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        recognitionRef.current.start();
+      } catch (err) {
+        console.error("Failed to start SpeechRecognition:", err);
+      }
+    }
+  };
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -312,7 +372,7 @@ export default function SellerPanicChatBot({
 
         {/* Reasoning (Hinglish) */}
         <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-1.5">
-          <span className="text-[9px] font-mono font-bold text-amber-400 uppercase tracking-wide block">SHIKAR DEV BLUEPRINT ANALYSIS:</span>
+          <span className="text-[9px] font-mono font-bold text-amber-400 uppercase tracking-wide block">ASHTEK FIRE AI BLUEPRINT ANALYSIS:</span>
           <p className="text-xs text-slate-200 leading-relaxed font-sans">{reasoning}</p>
         </div>
 
@@ -381,7 +441,7 @@ export default function SellerPanicChatBot({
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <h4 className="text-[11px] sm:text-xs font-black tracking-wide font-mono text-white">Shikar Dev Option-AI</h4>
+                  <h4 className="text-[11px] sm:text-xs font-black tracking-wide font-mono text-white">AshTek Fire AI</h4>
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 </div>
                 <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono">Live dynamic tracker &amp; buyer setups</p>
@@ -429,7 +489,7 @@ export default function SellerPanicChatBot({
                   }`}>
                     <div className="flex items-center justify-between gap-2 border-b border-slate-800/40 pb-1 mb-1 font-mono text-[8px] sm:text-[9px] text-slate-400">
                       <span className="font-bold flex items-center gap-1 uppercase">
-                        {isAI ? "🐯 Shikar Dev AI" : "👤 Option Shikar"}
+                        {isAI ? "🔥 AshTek Fire AI" : "👤 Option Trader"}
                       </span>
                       <span>
                         {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -447,7 +507,7 @@ export default function SellerPanicChatBot({
               <div className="flex justify-start">
                 <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-400 flex items-center gap-2">
                   <span className="animate-spin h-3 w-3 border-2 border-rose-500 border-t-transparent rounded-full" />
-                  <span className="font-mono text-[9px] sm:text-[10px]">Shikar Dev calculation kar raha hai...</span>
+                  <span className="font-mono text-[9px] sm:text-[10px]">AshTek Fire AI calculation kar raha hai...</span>
                 </div>
               </div>
             )}
@@ -491,14 +551,29 @@ export default function SellerPanicChatBot({
               type="text"
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              placeholder="Ask anything in Hinglish... (e.g., Strike 24000 status?)"
+              placeholder="Ask in Hinglish... (e.g., Strike 24000 status?)"
               disabled={isLoading}
               className="flex-1 bg-slate-900 border border-slate-800 rounded-lg py-1.5 px-2.5 sm:py-2 sm:px-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-600 disabled:opacity-50"
             />
+            
+            {/* Voice-to-text mic input button */}
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`p-1.5 sm:p-2 border rounded-lg transition transform active:scale-95 flex items-center justify-center aspect-square cursor-pointer shrink-0 ${
+                isListening 
+                  ? "bg-red-600 hover:bg-red-500 text-white border-red-500 animate-pulse" 
+                  : "bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800"
+              }`}
+              title={isListening ? "Listening... Click to stop" : "Speak to type"}
+            >
+              {isListening ? <MicOff size={13} className="text-white" /> : <Mic size={13} />}
+            </button>
+
             <button
               type="submit"
               disabled={isLoading || !inputMessage.trim()}
-              className="p-1.5 sm:p-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:border-transparent text-white border border-rose-500 rounded-lg transition transform active:scale-95 flex items-center justify-center aspect-square"
+              className="p-1.5 sm:p-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:border-transparent text-white border border-rose-500 rounded-lg transition transform active:scale-95 flex items-center justify-center aspect-square shrink-0"
             >
               <Send size={13} />
             </button>

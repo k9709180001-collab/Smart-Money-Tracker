@@ -1460,7 +1460,7 @@ app.post("/api/chat", async (req, res) => {
     ? peCoveringStrikes.map((s: any) => `Strike ${s.strike} (OI changed by ${s.change.toFixed(2)}%)`).join(", ")
     : "None detected (Put writing stable)";
 
-  const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `तुम "AshTek Options Shikar Dev (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
+  const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `तुम "AshTek Fire AI (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
 
 **तुम्हारे विश्लेषण के मुख्य 3 स्तंभ (नियम):**
 
