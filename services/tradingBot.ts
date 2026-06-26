@@ -197,7 +197,14 @@ export const runAutoTradingBot = async (liveCache: any) => {
         }
       } catch (err: any) {
         lastError = err;
-        console.warn(`⚠️ [Trading Bot] Model ${modelName} failed or busy. Rotating to next model in the list... Error: ${err.message || err}`);
+        console.warn(`⚠️ [Trading Bot] Model ${modelName} failed or busy. Error: ${err.message || err}`);
+        
+        // If it's a quota / rate limit / 429 error, don't try other models. They will all fail anyway!
+        const errMsg = ((err.message || "") + " " + JSON.stringify(err)).toLowerCase();
+        if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
+          console.log("🛑 Quota limit detected. Aborting model rotation to save system overhead.");
+          break; // Break the model loop immediately
+        }
       }
     }
 

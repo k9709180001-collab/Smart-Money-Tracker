@@ -193,6 +193,7 @@ async function generateContentWithFallback(
         if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
           serverFallbackUntil = Date.now() + 5 * 60 * 1000;
           console.log(`⚠️ Gemini API rate limit or quota exceeded in generateContentWithFallback. Entering server fallback mode for 5 minutes (until ${new Date(serverFallbackUntil).toLocaleTimeString()}).`);
+          throw error; // Immediately break and throw to activate direct quantitative fallback report
         }
 
         const isTransient =
@@ -1117,6 +1118,7 @@ app.post("/api/parse-image", async (req, res) => {
           if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
             serverFallbackUntil = Date.now() + 5 * 60 * 1000;
             console.log(`⚠️ Gemini API rate limit or quota exceeded in parse-image. Entering server fallback mode for 5 minutes (until ${new Date(serverFallbackUntil).toLocaleTimeString()}).`);
+            throw error; // Immediately throw to exit retry and model loops
           }
 
           const isTransient =
