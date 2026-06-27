@@ -435,7 +435,12 @@ export default function App() {
         const res = await fetch("/api/bot/get-signal", { method: "POST" });
         const data = await res.json();
         
-        if (data.success && data.data && (data.data.signal === "BUY_CE" || data.data.signal === "BUY_PE")) {
+        if (data.success && data.data && (
+          data.data.signal === "BUY_CE" || 
+          data.data.signal === "BUY_PE" || 
+          data.data.signal === "BUY" || 
+          data.data.signal === "SELL"
+        )) {
           // Play a small beep / audio notification if permitted by browser
           try {
             const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -455,7 +460,8 @@ export default function App() {
           setBotAlert(data.data);
           
           // Browser window alert as requested
-          alert(`🚨 AshTek SIGNAL TRIGGERED: ${data.data.signal} at ${data.data.suggested_strike}\nReasoning: ${data.data.reasoning}`);
+          const sigDisplay = data.data.signal === "BUY" ? "BUY CALL (CE)" : (data.data.signal === "SELL" ? "BUY PUT (PE)" : data.data.signal);
+          alert(`🚨 AshTek SIGNAL TRIGGERED: ${sigDisplay} at ${data.data.suggested_strike || "ATM"}\nReasoning: ${data.data.reason || data.data.reasoning}`);
         }
       } catch (err) {
         console.error("Bot background fetch error:", err);
@@ -578,8 +584,65 @@ export default function App() {
     });
   };
 
-  const handleParseAndLoadOptionChain = () => {
+  const handleParseAndLoadOptionChain = async () => {
     try {
+      const trimmedText = rawPasteText.trim();
+      if (trimmedText.startsWith("{") && trimmedText.endsWith("}")) {
+        const parsedJson = JSON.parse(trimmedText);
+        const overridesToPerform = [];
+        
+        if (typeof parsedJson.nifty === "number") {
+          overridesToPerform.push({ symbol: "NIFTY", value: parsedJson.nifty, prevClose: parsedJson.niftyPrev });
+        }
+        if (typeof parsedJson.bankNifty === "number") {
+          overridesToPerform.push({ symbol: "BANKNIFTY", value: parsedJson.bankNifty, prevClose: parsedJson.bankNiftyPrev });
+        }
+        if (typeof parsedJson.vix === "number") {
+          overridesToPerform.push({ symbol: "INDIAVIX", value: parsedJson.vix });
+        }
+        if (Array.isArray(parsedJson.topStocks)) {
+          for (const stock of parsedJson.topStocks) {
+            if (stock && stock.symbol && typeof stock.price === "number") {
+              overridesToPerform.push({
+                symbol: stock.symbol,
+                value: stock.price,
+                prevClose: stock.prevClose
+              });
+            }
+          }
+        }
+        
+        if (overridesToPerform.length > 0) {
+          for (const item of overridesToPerform) {
+            await fetch("/api/market-indices/override", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(item),
+            });
+          }
+          
+          setParseSuccessMessage(`सफलतापूर्वक ${overridesToPerform.length} इंडेक्स और स्टॉक्स के कस्टमाइज़्ड डेटा को सर्वर पर लोड कर दिया गया है!`);
+          setErrorStatus(null);
+          
+          // Re-fetch current statuses in the UI
+          fetchIndicesStatus();
+          
+          // Trigger a fresh trading bot signal immediately!
+          const botRes = await fetch("/api/bot/get-signal", { method: "POST" });
+          const botData = await botRes.json();
+          if (botData.success && botData.data) {
+            setBotAlert(botData.data);
+            const sigDisplay = botData.data.signal === "BUY" ? "BUY CALL (CE)" : (botData.data.signal === "SELL" ? "BUY PUT (PE)" : botData.data.signal);
+            alert(`🚨 AshTek SIGNAL TRIGGERED: ${sigDisplay} at ${botData.data.suggested_strike || "ATM"}\nReasoning: ${botData.data.reason || botData.data.reasoning}`);
+          }
+          
+          setTimeout(() => {
+            setParseSuccessMessage(null);
+          }, 6050);
+          return;
+        }
+      }
+
       const result = parseSensibullCSV(rawPasteText);
       if (result) {
         setOptionChain(result.rows);
@@ -837,7 +900,14 @@ export default function App() {
       
       {/* PROFESSIONAL TITLE / HEADER BAR */}
       <header className="border-b border-slate-800 bg-gradient-to-r from-slate-900 via-slate-850 to-indigo-950 text-white sticky top-0 z-50 px-4 sm:px-6 py-4 sm:py-4.5 flex flex-wrap justify-between items-center gap-3 sm:gap-4 shadow-md" id="main-header">
-        <div className="flex items-center gap-3" id="header-left-brand">
+        <div 
+          onClick={() => {
+            setActivePage("intro");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          className="flex items-center gap-3 cursor-pointer hover:opacity-90 transition-opacity" 
+          id="header-left-brand"
+        >
           <div className="p-2 bg-slate-800/90 border border-slate-700/80 text-orange-500 rounded-lg shadow-sm flex items-center justify-center animate-pulse" id="header-logo-container">
             <BrainCircuit size={19} className="text-orange-500" />
           </div>
@@ -1268,7 +1338,7 @@ export default function App() {
                   <span className="bg-gradient-to-r from-orange-400 via-rose-400 to-sky-400 bg-clip-text text-transparent">Smart Money Analyst Suite</span>
                 </h1>
                 <p className="text-slate-300 text-sm sm:text-base leading-relaxed font-sans max-w-2xl">
-                  Decrypt and track institutional footprints with real-time derivative calculators, implied volatility metrics, and rule-based option buyer alerts. Built for precision-focused quantitative market analysts.
+                  <strong>India's 1st AI-Powered Trading Signal System</strong>: Decrypt and track institutional footprints with real-time derivative calculators, implied volatility metrics, and rule-based option buyer alerts. Built for precision-focused quantitative market analysts.
                 </p>
                 <div className="pt-4 flex flex-wrap gap-4">
                   <button
@@ -1921,9 +1991,33 @@ export default function App() {
                       AUTO-PARSING
                     </span>
                   </div>
-                  <p className="text-[11.5px] text-slate-600 leading-relaxed">
-                    Sensibull ya bank/nifty option table clipboard se copy karke yahan paste karein. AI will auto-structure open interest levels!
-                  </p>
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-[11.5px] text-slate-600 leading-relaxed">
+                      Sensibull ya bank/nifty option table clipboard se copy karke yahan paste karein, ya test ke liye customized data JSON use karein.
+                    </p>
+                    <button
+                      onClick={() => {
+                        const testJson = {
+                          "nifty": 22450,
+                          "niftyPrev": 22380,
+                          "bankNifty": 48000,
+                          "bankNiftyPrev": 47850,
+                          "vix": 14.5,
+                          "topStocks": [
+                            {"symbol": "RELIANCE", "price": 2450, "prevClose": 2430},
+                            {"symbol": "TCS", "price": 3600, "prevClose": 3580},
+                            {"symbol": "HDFC", "price": 1650, "prevClose": 1670}
+                          ],
+                          "volumeTrend": "Above Average"
+                        };
+                        setRawPasteText(JSON.stringify(testJson, null, 2));
+                        setUseRawPaste(true);
+                      }}
+                      className="text-[10px] bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold px-2 py-1 rounded transition-all cursor-pointer font-mono shrink-0"
+                    >
+                      🧪 Paste Test JSON
+                    </button>
+                  </div>
                   <textarea
                     placeholder="Paste raw Option Chain / CSV / Sensibull text data OR directly paste a screenshot (Ctrl+V) here..."
                     className="w-full h-36 bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-lg p-2.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-400"
@@ -2727,17 +2821,17 @@ export default function App() {
             
             {/* Header: Flashing signal beacon */}
             <div className={`p-4 flex items-center justify-between border-b ${
-              botAlert.signal === "BUY_CE" 
+              (botAlert.signal === "BUY_CE" || botAlert.signal === "BUY") 
                 ? "bg-gradient-to-r from-emerald-950 via-emerald-900 to-slate-900 border-emerald-500/30 text-emerald-400" 
                 : "bg-gradient-to-r from-rose-950 via-rose-900 to-slate-900 border-rose-500/30 text-rose-400"
             }`}>
               <div className="flex items-center gap-2">
                 <span className="flex h-3 w-3 relative">
                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                    botAlert.signal === "BUY_CE" ? "bg-emerald-400" : "bg-rose-400"
+                    (botAlert.signal === "BUY_CE" || botAlert.signal === "BUY") ? "bg-emerald-400" : "bg-rose-400"
                   }`}></span>
                   <span className={`relative inline-flex rounded-full h-3 w-3 ${
-                    botAlert.signal === "BUY_CE" ? "bg-emerald-500" : "bg-rose-500"
+                    (botAlert.signal === "BUY_CE" || botAlert.signal === "BUY") ? "bg-emerald-500" : "bg-rose-500"
                   }`}></span>
                 </span>
                 <span className="text-xs font-black uppercase tracking-wider font-mono">
@@ -2756,9 +2850,9 @@ export default function App() {
                 <div>
                   <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 font-mono block">Action Type</span>
                   <span className={`text-2xl font-black font-mono tracking-tight flex items-center gap-1.5 ${
-                    botAlert.signal === "BUY_CE" ? "text-emerald-400" : "text-rose-400"
+                    (botAlert.signal === "BUY_CE" || botAlert.signal === "BUY") ? "text-emerald-400" : "text-rose-400"
                   }`}>
-                    {botAlert.signal === "BUY_CE" ? (
+                    {(botAlert.signal === "BUY_CE" || botAlert.signal === "BUY") ? (
                       <>
                         <TrendingUp size={22} className="stroke-[3]" />
                         BUY CALL (CE)
@@ -2783,15 +2877,15 @@ export default function App() {
               {/* Grid of quantitative details */}
               <div className="grid grid-cols-2 gap-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <div>
-                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Market Phase</span>
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Psychology</span>
                   <span className="text-xs font-bold text-slate-200 font-mono">
-                    {botAlert.market_phase || "Tactical Consolidation"}
+                    {botAlert.psychology || botAlert.market_phase || "Tactical Consolidation"}
                   </span>
                 </div>
                 <div>
-                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Trap State</span>
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 font-mono block">Confidence</span>
                   <span className="text-xs font-bold text-slate-200 font-mono">
-                    {botAlert.trap_detected || "No Trap Detected"}
+                    {botAlert.confidence || botAlert.trap_detected || "No Trap Detected"}
                   </span>
                 </div>
                 <div className="mt-2">
@@ -2810,11 +2904,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Bot Reasoning in Mix Hindi/English */}
+              {/* Bot Reasoning */}
               <div className="space-y-1 bg-indigo-500/5 border border-indigo-500/10 p-4 rounded-xl">
-                <span className="text-[9px] uppercase font-black tracking-wider text-indigo-400 font-mono block">AI ANALYSIS &amp; WHY TO BUY</span>
-                <p className="text-xs text-slate-350 leading-relaxed font-sans">
-                  {botAlert.reasoning}
+                <span className="text-[9px] uppercase font-black tracking-wider text-indigo-400 font-mono block">AI ANALYSIS &amp; DETECTED SETUP</span>
+                <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                  {botAlert.reason || botAlert.reasoning}
                 </p>
               </div>
 

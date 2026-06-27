@@ -41,6 +41,7 @@ export default function SellerPanicChatBot({
   
   // Voice Input (Speech to Text) Support
   const [isListening, setIsListening] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -53,16 +54,27 @@ export default function SellerPanicChatBot({
 
       rec.onstart = () => {
         setIsListening(true);
+        setSpeechStatus("Listening... (Speak now)");
       };
 
       rec.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         setInputMessage((prev) => prev ? prev + " " + transcript : transcript);
+        setSpeechStatus(null);
       };
 
       rec.onerror = (event: any) => {
-        console.error("Speech Recognition Error:", event.error);
+        // Change console.error to console.warn to prevent expected browser API conditions like silence (no-speech) from flagging as app defects
+        console.warn("Speech Recognition Info:", event.error);
         setIsListening(false);
+        if (event.error === "no-speech") {
+          setSpeechStatus("No speech detected. Please speak closer to your mic.");
+        } else if (event.error === "not-allowed") {
+          setSpeechStatus("Microphone permission was denied.");
+        } else {
+          setSpeechStatus(`Speech alert: ${event.error}`);
+        }
+        setTimeout(() => setSpeechStatus(null), 4000);
       };
 
       rec.onend = () => {
@@ -83,17 +95,24 @@ export default function SellerPanicChatBot({
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
-      alert("Aapka browser voice typing support nahi karta ya microphone permission nahi di gayi hai.");
+      setSpeechStatus("Voice typing not supported or permitted on this browser.");
+      setTimeout(() => setSpeechStatus(null), 4000);
       return;
     }
 
     if (isListening) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      setIsListening(false);
     } else {
       try {
+        setSpeechStatus("Starting microphone...");
         recognitionRef.current.start();
       } catch (err) {
-        console.error("Failed to start SpeechRecognition:", err);
+        console.warn("Failed to start SpeechRecognition:", err);
+        setSpeechStatus("Failed to start microphone.");
+        setTimeout(() => setSpeechStatus(null), 3000);
       }
     }
   };
@@ -322,13 +341,25 @@ export default function SellerPanicChatBot({
       );
     }
 
+    // Handle new structured JSON responses
+    if (parsed.response_type === "text") {
+      return (
+        <div className="whitespace-pre-line font-sans">
+          {renderMessageText(parsed.text_response || "")}
+        </div>
+      );
+    }
+
+    // Extract card data (handling nested setup_card or old flat structure)
+    const cardData = parsed.response_type === "setup_card" ? (parsed.setup_card || {}) : parsed;
+
     // Beautiful UI card for JSON response
-    const signal = parsed.signal || "NO_TRADE";
-    const marketPhase = parsed.market_phase || "Unknown Phase";
-    const trapDetected = parsed.trap_detected || "None";
-    const reasoning = parsed.reasoning || "";
-    const suggestedStrike = parsed.suggested_strike || "N/A";
-    const risk = parsed.risk || "Medium";
+    const signal = cardData.signal || "NO_TRADE";
+    const marketPhase = cardData.market_phase || "Unknown Phase";
+    const trapDetected = cardData.trap_detected || "None";
+    const reasoning = cardData.reasoning || "";
+    const suggestedStrike = cardData.suggested_strike || "N/A";
+    const risk = cardData.risk || "Medium";
 
     let signalBadgeColor = "bg-slate-800 text-slate-400 border-slate-700";
     let signalText = "NO TRADE ZONE";
@@ -538,6 +569,25 @@ export default function SellerPanicChatBot({
               ))}
             </div>
           </div>
+
+          {/* Dynamic speech listening and error status banner */}
+          {speechStatus && (
+            <div className="bg-slate-950 border-t border-slate-800 px-3 py-1.5 text-[9px] sm:text-[10px] font-mono text-amber-400 flex items-center justify-between animate-fade-in">
+              <span className="flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${isListening ? "bg-red-500 animate-ping" : "bg-amber-500"}`}></span>
+                {speechStatus}
+              </span>
+              {isListening && (
+                <button 
+                  type="button" 
+                  onClick={() => recognitionRef.current?.stop()}
+                  className="text-slate-500 hover:text-white transition text-[8px] uppercase tracking-wider font-bold"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Input field actions footer */}
           <form 

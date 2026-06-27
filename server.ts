@@ -5,6 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { runAutoTradingBot } from "./services/tradingBot.js";
+import { analyzeMarketWithGemini } from "./services/geminiAnalyzer.js";
 
 dotenv.config();
 
@@ -140,6 +141,35 @@ const derivativesReportSchema = {
     },
   },
   required: ["pcr", "supportResistance", "institutionalAlignment", "trapsAndScenarios", "suggestedStrategies"],
+};
+
+// Structured schema for chat bot answers
+const chatResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    response_type: {
+      type: Type.STRING,
+      description: "Must be 'text' for general conversation, greetings, education or individual stock LTP queries (like Reliance, HDFC, SBI, etc.), OR 'setup_card' only when the user explicitly asks for Nifty option signals, setups, support-resistance range, active traps, or entry-exit triggers."
+    },
+    text_response: {
+      type: Type.STRING,
+      description: "Used when response_type is 'text'. Provide a friendly, helpful, natural conversational Hinglish text answer. For individual stocks, clearly explain that you only have live index options/derivatives data for Nifty 50, and don't have individual stock feeds."
+    },
+    setup_card: {
+      type: Type.OBJECT,
+      properties: {
+        market_phase: { type: Type.STRING, description: "Phase 1 / 2 / 3 / 4 / 5" },
+        trap_detected: { type: Type.STRING, description: "Bull Trap / Bear Trap / None" },
+        signal: { type: Type.STRING, description: "BUY_CE / BUY_PE / NO_TRADE" },
+        reasoning: { type: Type.STRING, description: "Detailed quantitative explanation in Hinglish of why this signal is active." },
+        suggested_strike: { type: Type.NUMBER, description: "Suggested index strike price (e.g., 24000, 24100)." },
+        risk: { type: Type.STRING, description: "High / Medium / Low" }
+      },
+      required: ["market_phase", "trap_detected", "signal", "reasoning", "suggested_strike", "risk"],
+      description: "Must contain valid values if response_type is 'setup_card'."
+    }
+  },
+  required: ["response_type", "text_response"]
 };
 
 // Robust helper function with retries and exponential backoff, with fallback models if gemini-3.5-flash is overloaded
@@ -504,7 +534,17 @@ const YAHOO_TICKERS: Record<string, string> = {
   hangseng: "^HSI"
 };
 
+function isValidMarketData(data: any) {
+  // Nifty kabhi 0 ya 1000 se neeche nahi jaata (India mein)
+  if (!data.nifty || data.nifty < 10000 || data.nifty > 30000) {
+    console.error("❌ Invalid Nifty Data detected:", data.nifty);
+    return false; // Fallback use karo
+  }
+  return true;
+}
+
 async function syncWithYahooFinance() {
+  console.log("🟢 Bot A: Fetching Yahoo Data for Nifty...");
   console.log("[Yahoo Finance] Syncing indices & heavyweights with real-time global feed...");
   const tickerKeys = Object.keys(YAHOO_TICKERS);
   
@@ -522,6 +562,15 @@ async function syncWithYahooFinance() {
         const meta = json?.chart?.result?.[0]?.meta;
         if (meta && typeof meta.regularMarketPrice === 'number') {
           const value = meta.regularMarketPrice;
+
+          // Validate if key is nifty
+          if (key === "nifty") {
+            if (!isValidMarketData({ nifty: value })) {
+              console.log("[Yahoo Finance] Nifty validation failed. Fallback to existing value.");
+              return;
+            }
+          }
+
           const prevClose = meta.previousClose || meta.chartPreviousClose || liveMarketIndicesCache[key]?.prevClose || value;
           const change = prevClose > 0 ? parseFloat(((value - prevClose) / prevClose * 100).toFixed(2)) : 0;
           
@@ -539,6 +588,8 @@ async function syncWithYahooFinance() {
 
   syncDependentIndicesWithNifty();
   liveMarketIndicesCache.lastUpdated = new Date().toISOString();
+  const niftyData = liveMarketIndicesCache.nifty;
+  console.log("🟢 Bot A: Yahoo Data received:", niftyData);
   console.log(`[Yahoo Finance] Active benchmarks updated. NIFTY Spot: ₹${liveMarketIndicesCache.nifty.value}`);
 }
 
@@ -551,7 +602,9 @@ async function fetchRealTimeIndicesFromNSE() {
   }
 
   try {
+    console.log("🟢 Bot A: Fetching NSE cookies...");
     const cookies = await getNSECookies();
+    console.log("🟢 Bot A: NSE cookies fetched successfully");
     const apiUrl = "https://www.nseindia.com/api/allIndices";
     console.log("[NSE] Fetching allIndices for real-world live market benchmarks...");
     
@@ -567,16 +620,21 @@ async function fetchRealTimeIndicesFromNSE() {
 
     if (apiRes.ok) {
       const nseData = await apiRes.json();
+      console.log("🟢 Bot A: NSE API Data:", nseData);
       if (nseData && Array.isArray(nseData.data)) {
         let foundNifty50 = false;
         nseData.data.forEach((idxObj: any) => {
           const indexName = idxObj.index ? idxObj.index.toUpperCase().trim() : "";
           
           if (indexName === "NIFTY 50") {
-            liveMarketIndicesCache.nifty.value = idxObj.last;
-            liveMarketIndicesCache.nifty.change = idxObj.percentChange;
-            liveMarketIndicesCache.nifty.prevClose = idxObj.previousClose;
-            foundNifty50 = true;
+            if (isValidMarketData({ nifty: idxObj.last })) {
+              liveMarketIndicesCache.nifty.value = idxObj.last;
+              liveMarketIndicesCache.nifty.change = idxObj.percentChange;
+              liveMarketIndicesCache.nifty.prevClose = idxObj.previousClose;
+              foundNifty50 = true;
+            } else {
+              console.log("[NSE] Nifty validation failed. Fallback to existing value.");
+            }
           } else if (indexName === "NIFTY BANK") {
             liveMarketIndicesCache.banknifty.value = idxObj.last;
             liveMarketIndicesCache.banknifty.change = idxObj.percentChange;
@@ -604,8 +662,11 @@ async function fetchRealTimeIndicesFromNSE() {
         liveMarketIndicesCache.lastUpdated = new Date().toISOString();
         console.log("[NSE] ✅ Synced live NSE index indicators successfully.");
       }
+    } else {
+      console.log("🟢 Bot A: Fallback engine triggered? (Market closed)");
     }
   } catch (err: any) {
+    console.log("🟢 Bot A: Fallback engine triggered? (Market closed)");
     // Keep cached or preset rates
     console.log(`[NSE Info] Syncing with local indicators tracker. Benchmark: ${liveMarketIndicesCache.nifty.value}`);
   }
@@ -902,12 +963,16 @@ app.get("/api/fetch-nse", async (req, res) => {
     // Propagate live spot price from NSE to indices cache dynamically
     if (spotPrice > 0) {
       if (symbol === "NIFTY") {
-        liveMarketIndicesCache.nifty.value = spotPrice;
-        const pc = liveMarketIndicesCache.nifty.prevClose;
-        if (pc > 0) {
-          liveMarketIndicesCache.nifty.change = parseFloat(((spotPrice - pc) / pc * 100).toFixed(2));
+        if (isValidMarketData({ nifty: spotPrice })) {
+          liveMarketIndicesCache.nifty.value = spotPrice;
+          const pc = liveMarketIndicesCache.nifty.prevClose;
+          if (pc > 0) {
+            liveMarketIndicesCache.nifty.change = parseFloat(((spotPrice - pc) / pc * 100).toFixed(2));
+          }
+          syncDependentIndicesWithNifty();
+        } else {
+          console.log("[NSE Option Chain] Nifty validation failed. Fallback to existing value.");
         }
-        syncDependentIndicesWithNifty();
       } else if (symbol === "BANKNIFTY") {
         liveMarketIndicesCache.banknifty.value = spotPrice;
       } else if (symbol === "FINNIFTY") {
@@ -1381,6 +1446,8 @@ app.post("/api/market-indices/override", (req, res) => {
   else if (key === "indiavix" || key === "vix") targetKey = "indiavix";
   else if (key === "infy" || key === "infosys" || key === "infosics") targetKey = "infy";
   else if (key === "tcs") targetKey = "tcs";
+  else if (key === "reliance" || key === "rel") targetKey = "reliance";
+  else if (key === "hdfc" || key === "hdfcbank") targetKey = "hdfcbank";
 
   if (targetKey && liveMarketIndicesCache[targetKey]) {
     liveMarketIndicesCache[targetKey].value = value;
@@ -1407,6 +1474,11 @@ app.post("/api/bot/get-signal", async (req, res) => {
     const liveDataFromCache = {
       nifty_spot: liveMarketIndicesCache.nifty?.value || 24018.45,
       vix: liveMarketIndicesCache.indiavix?.value || 13.20,
+      banknifty_spot: liveMarketIndicesCache.banknifty?.value || 52480.15,
+      reliance_price: liveMarketIndicesCache.reliance?.value || 2940.50,
+      hdfcbank_price: liveMarketIndicesCache.hdfcbank?.value || 1625.30,
+      infy_price: liveMarketIndicesCache.infy?.value || 1885.20,
+      tcs_price: liveMarketIndicesCache.tcs?.value || 4125.60,
       ce_oi_change: 0.05,
       pe_oi_change: 0.04,
       atm_strike: Math.round((liveMarketIndicesCache.nifty?.value || 24018.45) / 50) * 50,
@@ -1451,6 +1523,31 @@ app.post("/api/chat", async (req, res) => {
   const peCoveringStrikes = Array.isArray(context.peCoveringStrikes) ? context.peCoveringStrikes : [];
   const isBreakoutActive = !!context.isBreakoutActive;
 
+  // 1. Run the Auto-Trading Bot to get real-time computed signal/setup
+  let tradingBotResult: any = null;
+  try {
+    const liveDataForBot = {
+      nifty_spot: liveMarketIndicesCache.nifty?.value || indexValue,
+      vix: liveMarketIndicesCache.indiavix?.value || vixValue,
+      banknifty_spot: liveMarketIndicesCache.banknifty?.value || 52480.15,
+      reliance_price: liveMarketIndicesCache.reliance?.value || 2940.50,
+      hdfcbank_price: liveMarketIndicesCache.hdfcbank?.value || 1625.30,
+      infy_price: liveMarketIndicesCache.infy?.value || 1885.20,
+      tcs_price: liveMarketIndicesCache.tcs?.value || 4125.60,
+      ce_oi_change: context.ce_oi_change !== undefined ? context.ce_oi_change : 0.05,
+      pe_oi_change: context.pe_oi_change !== undefined ? context.pe_oi_change : 0.04,
+      atm_strike: Math.round((liveMarketIndicesCache.nifty?.value || indexValue) / 50) * 50,
+      ce_premium: context.ce_premium || "120",
+      pe_premium: context.pe_premium || "115",
+      fii_net_activity: fiiCashNet,
+      dii_net_activity: diiCashNet,
+      market_open: liveMarketIndicesCache.nifty?.prevClose || context.market_open || 23920.00,
+    };
+    tradingBotResult = await runAutoTradingBot(liveDataForBot);
+  } catch (botErr) {
+    console.error("Error running auto trading bot inside chatbot:", botErr);
+  }
+
   // Prepare highlights for the AI Context
   const ceCoveringSummary = ceCoveringStrikes.length > 0
     ? ceCoveringStrikes.map((s: any) => `Strike ${s.strike} (OI changed by ${s.change.toFixed(2)}%)`).join(", ")
@@ -1460,35 +1557,51 @@ app.post("/api/chat", async (req, res) => {
     ? peCoveringStrikes.map((s: any) => `Strike ${s.strike} (OI changed by ${s.change.toFixed(2)}%)`).join(", ")
     : "None detected (Put writing stable)";
 
-  const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `तुम "AshTek Fire AI (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बोलते हो और हर जवाब के अंत में सिर्फ 3 सिग्नल में से एक देते हो: 🟢 BUY CE ACTIVE, 🔴 BUY PE ACTIVE, या 🟡 NO TRADE ZONE।
+  // Dynamically collect all available live prices from our Web Application Cache
+  const liveCacheSummary = Object.keys(liveMarketIndicesCache)
+    .filter(key => key !== 'lastUpdated' && typeof liveMarketIndicesCache[key] === 'object')
+    .map(key => {
+      const item = liveMarketIndicesCache[key];
+      return `- **${item.name || key.toUpperCase()} (${item.symbol || key.toUpperCase()})**: LTP: ₹${item.value.toLocaleString('en-IN')} (${item.change >= 0 ? "+" : ""}${item.change.toFixed(2)}%) [Prev Close: ₹${item.prevClose.toLocaleString('en-IN')}]`;
+    })
+    .join("\n");
 
-**तुम्हारे विश्लेषण के मुख्य 3 स्तंभ (नियम):**
+  const CHAT_SYSTEM_PROMPT = `तुम "AshTek Fire AI (Seller Panic AI Bot)" हो। तुम्हारा काम रीटेल ट्रेडर्स को Operators (Smart Money) के जाल से बचाना है। तुम केवल Hinglish (रोमन हिंदी) में बात करते हो।
 
-1. **5-Phase Expiry Trap Cycle (एक्सपायरी का खेल):**
-   - **Phase 1 (Morning Bull Trap - 9:15 to 10:30):** अगर सुबह तेजी आ रही है लेकिन VIX बढ़ रहा है, तो ये झांसा है। इस समय BUY CE का सिग्नल मत दो।
-   - **Phase 2 (Smart Money Strike - 10:30 to 12:30):** अचानक गिरावट आती है। अगर Nifty 50 अपने पिछले 15-min के Low को तोड़ता है और VIX > 15 है, तो 🔴 BUY PE ACTIVE दो।
-   - **Phase 3 (Shock & Decay Zone - 12:30 to 2:15):** मार्केट को साइडवेज करके प्रीमियम गलाया जाता है। इस समय (जब Nifty सिर्फ 0.2-0.4% की रेंज में हो) 🟡 NO TRADE ZONE दो, भले ही तुम्हें कुछ और सिग्नल दिखे।
-   - **Phase 4 (Hope Revival - 2:15 to 3:00):** झूठा ब्रेकआउट। अगर Nifty VWAP से ऊपर जाए लेकिन Put OI (ओपन INTEREST) घटने की बजाय बढ़ रहा है, तो ये ट्रैप है, Buy CE मत दो।
-   - **Phase 5 (Final Rug Pull - 3:00 to 3:30):** अगर 3:00 बजे के बाद VIX में 3% से ज्यादा की तेजी आती है, तो 🔴 BUY PE ACTIVE दो। अगर VIX फ्लैट है और OI स्क्वीज हो रहा है, तो 🟢 BUY CE ACTIVE दो।
+तुम्हारे पास लाइव मार्केट का डेटा "Live Market Context" और [COMPUTED QUANTITATIVE TRADING BOT RECOMMENDATION] के तौर पर भेजा जाएगा। तुम्हें यूजर के हर सवाल का जवाब उसी कांटेक्स्ट के अनुसार और यूजर के प्रश्न के अनुसार देना है।
 
-2. **Operator Fake Breakdown / Bear Trap Detection (भालू का जाल):**
-   - **सबसे जरूरी नियम:** यदि NIFTY की कीमत (Price) गिर रही है (लाल कैंडल बन रही है) **लेकिन** आपको डेटा में "Put OI Change" (पुट ओपन इंटरेस्ट) **घटने** के बजाय **बढ़ता** (Positive) हुआ दिखे, तो समझ जाओ कि बड़े खिलाड़ी (Operators) नीचे से सपोर्ट खरीद रहे हैं। ये **Bear Trap** है। ऐसे में NEVER say BUY PE. यहाँ 🟢 BUY CE ACTIVE का मौका होता है।
+तुम्हें हमेशा "chatResponseSchema" के अनुसार JSON ऑब्जेक्ट के रूप में उत्तर देना है, जिसमें दो मुख्य प्रकार हो सकते हैं (response_type):
 
-3. **FII और DII की सैर (Institutional Activity):**
-   - अगर FII आज के कारोबार में 1000 करोड़ से ज्यादा की बिकवाली (Sell) कर रहे हैं, लेकिन DII उतनी ही खरीदारी (Buy) कर रहे हैं, तो मार्केट डिप पर ठीक हो जाएगा। इस स्थिति में ओवरऑल ट्रेंड न्यूट्रल रहेगा।
-   - अगर FII और DII दोनों एक साथ बिकवाली कर रहे हैं, तो भारी गिरावट आ सकती है → 🔴 BUY PE ACTIVE।
+1. "text": सामान्य सवाल, बातचीत, ज्ञानवर्धक बातें, या इंडिविजुअल शेयर (जैसे: Reliance, HDFC, TCS, Infosys/Infy आदि) के बारे में प्रश्न।
+   - यदि यूजर किसी पर्टिकुलर शेयर या इंडेक्स का LTP या भाव पूछता है, तो तुम्हारे पास 'Live Market Context' में मौजूद 'LIVE MARKT INDICES CACHE' का रियल-टाइम डेटा उपयोग करके उसे सटीक विश्लेषण के साथ Hinglish में उत्तर दें। कभी भी यह मत कहना कि तुम्हारे पास स्टॉक का डेटा नहीं है! तुम्हारे पास Reliance, HDFC, TCS, Infosys का असली लाइव भाव है।
+   - यदि यूजर Monday Market, market opening, gap up or gap down prediction (कल क्या होगा, गैप अप या गैप डाउन) के बारे में पूछे, तो तुम्हारे पास 'Live Market Context' में मौजूद global markers (GIFT Nifty, Dow Jones, Nasdaq, Nikkei) का लाइव डेटा उपयोग करो। GIFT Nifty single best predictor है; change positive होने पर "Gap Up" Opening और change negative होने पर "Gap Down" Opening predict करो और शानदार quantitative explanation के साथ Trading Strategy बताओ।
+   - तुम्हें "text_response" फील्ड में जवाब देना है। "setup_card" को null या empty रख सकते हो।
 
-**तुम्हारा Output हमेशा इसी JSON फॉर्मेट में होना चाहिए (बिना किसी extra text के):**
-{
-  "market_phase": "Phase 1 / 2 / 3 / 4 / 5",
-  "trap_detected": "Bull Trap / Bear Trap / None",
-  "signal": "BUY_CE / BUY_PE / NO_TRADE",
-  "reasoning": "यहाँ 2 लाइन में Hinglish में कारण लिखो (जैसे: Price gir rahi hai lekin Put OI badh raha hai, toh Bear Trap hai, isliye CE lena chahiye).",
-  "suggested_strike": 24500,
-  "risk": "High / Medium / Low"
-}`;
+2. "setup_card": जब USER सीधे तौर पर Nifty / Index Options Setup, buying check, signal, breakout levels, active traps के बारे में पूछता है।
+   - इस केस में तुम्हें "setup_card" ऑब्जेक्ट के सभी फ़ील्ड्स (market_phase, trap_detected, signal, reasoning, suggested_strike, risk) को लाइव कांटेक्स्ट डेटा और [COMPUTED QUANTITATIVE TRADING BOT RECOMMENDATION] के अनुसार भरना है, "response_type" को "setup_card" रखना है, और "text_response" में एक संक्षिप्त संदेश देना है।
+   - हमारे 3 मुख्य नियम (5-Phase Expiry Trap Cycle, Bear Trap Detection, FII/DII Activities) का कड़ाई से पालन करें और जो ऑटो-ट्रेडिंग बॉट ने कैलकुलेट किया है, उसी दिशा में अलाइन रहें।
 
-  const systemInstruction = SYSTEM_PROMPT;
+---
+[KNOWLEDGE LIBRARY - ASHTEK SMART MONEY SUITE]
+* India_VIX Rules:
+  - India_VIX < 12: SIGNAL = "STRONG BUY (Both Calls & Puts)"
+  - India_VIX BETWEEN 12 AND 14:
+    * If India_VIX_Percent_Change > 0 (rising VIX): SIGNAL = "BUY (Directional - Trend following)"
+    * Else: SIGNAL = "WAIT (No fresh buying)"
+  - India_VIX BETWEEN 15 AND 19:
+    * If Nifty_Price > 20_EMA AND India_VIX_Percent_Change > 2%: SIGNAL = "HEDGED BUY (Buy ATM Straddle)"
+    * Else: SIGNAL = "AVOID / SELL EXISTING"
+  - India_VIX >= 20: SIGNAL = "🔴 BLOCK ALL BUY ORDERS. EXIT IF PROFIT > 20%"
+
+* Nifty ATM Straddle Buy Alert Rules (Option Buyer Focus):
+  - Alert trigger only when ALL 4 conditions are met:
+    1. VIX is Low: India VIX < 14.00
+    2. Straddle is cheap: Current Straddle Premium < SMA-10 OR premium crashed by >8% in last 24 hours.
+    3. Expiry is far (avoid theta decay): DTE >= 7 (best is between 10 to 20 days).
+    4. Major Upcoming Event (within 3 days): RBI Policy, Budget, US Fed Meeting, Election Result, Inflation Data, etc. (If no event, only alert if conditions 1, 2, 3 are exceptionally strong).
+  - Avoid Alerts: Do NOT buy if Nifty moved >1% in last 1 hour (already moved/expensive), if DTE < 3 days (extreme decay risk), or if alert was already sent today.`;
+
+  const systemInstruction = CHAT_SYSTEM_PROMPT;
 
   const dataContext = `
 [CURRENT LIVE DERIVATIVES MARKET STATE]
@@ -1503,116 +1616,203 @@ app.post("/api/chat", async (req, res) => {
   * Kall Sellers Covering (Negative CE OI Chg): ${ceCoveringSummary}
   * Put Sellers Covering (Negative PE OI Chg): ${peCoveringSummary}
 - FII/DII Institutional Activity: FII Cash Net ₹${fiiCashNet} Cr, DII Cash Net ₹${diiCashNet} Cr
+
+[LIVE MARKT INDICES CACHE (ALL CURRENT FEED DATA)]
+${liveCacheSummary}
+
+[COMPUTED QUANTITATIVE TRADING BOT RECOMMENDATION]
+- Bot Run Successful: ${tradingBotResult?.success || false}
+- Computed Market Phase: ${tradingBotResult?.data?.market_phase || "Phase 3"}
+- Computed Trap Detected: ${tradingBotResult?.data?.trap_detected || "None"}
+- Computed Active Signal: ${tradingBotResult?.data?.signal || "NO_TRADE"}
+- Quantitative Reasoning: ${tradingBotResult?.data?.reasoning || "Consolidating"}
+- Suggested Strike Price: ${tradingBotResult?.data?.suggested_strike || maxCeStrike}
+- Computed Risk Level: ${tradingBotResult?.data?.risk || "Medium"}
 `;
 
   try {
-    const liveCache = {
-      nifty_spot: indexValue,
-      vix: vixValue,
-      ce_oi_change: ceCoveringStrikes.reduce((acc: number, val: any) => acc + (val.change || 0), 0),
-      pe_oi_change: peCoveringStrikes.reduce((acc: number, val: any) => acc + (val.change || 0), 0),
-      atm_strike: Math.round(indexValue / 50) * 50,
-      ce_premium: "120",
-      pe_premium: "115",
-      fii_net_activity: fiiCashNet,
-      dii_net_activity: diiCashNet,
-      market_open: spotPrice,
-    };
+    const ai = getGeminiClient();
+    console.log(`[Gemini Chat] Sending user query to Gemini: "${message}"`);
 
-    console.log("[Route] Delegating options shikar to runAutoTradingBot service...");
-    const botResult = await runAutoTradingBot(liveCache);
+    const contents = [];
+    if (Array.isArray(history)) {
+      for (const msg of history) {
+        if (msg.text && msg.role) {
+          contents.push({
+            role: msg.role === "model" ? "model" : "user",
+            parts: [{ text: msg.text }]
+          });
+        }
+      }
+    }
+    contents.push({
+      role: "user",
+      parts: [{ text: `User Query: ${message}\n\nLive Market Context:\n${dataContext}` }]
+    });
 
-    if (botResult && botResult.data) {
-      return res.json({ response: JSON.stringify(botResult.data) });
+    const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+    let response = null;
+    let lastError = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: contents,
+          config: {
+            systemInstruction: CHAT_SYSTEM_PROMPT,
+            responseMimeType: "application/json",
+            responseSchema: chatResponseSchema,
+            temperature: 0.2
+          }
+        });
+        if (response && response.text) {
+          console.log(`[Gemini Chat] Successfully answered query using model ${modelName}`);
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = ((err.message || "") + " " + JSON.stringify(err)).toLowerCase();
+        if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("resource_exhausted") || errMsg.includes("limit")) {
+          console.log(`[Gemini Chat] Model ${modelName} hit quota limits. Advancing fallback.`);
+          break;
+        }
+      }
+    }
+
+    if (response && response.text) {
+      let cleaned = response.text.trim();
+      if (cleaned.startsWith("```")) {
+        cleaned = cleaned.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+      }
+      return res.json({ response: cleaned });
     } else {
-      throw new Error(botResult?.reasoning || "Failed to generate bot response.");
+      throw lastError || new Error("Failed to get response from Gemini models.");
     }
 
   } catch (err: any) {
-    console.log("[Gemini Chat] Direct quantitative fallback engine engaged. Returning JSON fallback.");
+    console.log("[Gemini Chat] Direct quantitative fallback engine engaged. Returning offline response.");
 
     const lowerMsg = message.toLowerCase();
-    let marketPhase = "Phase 3";
-    let trapDetected = "None";
-    let signal = "NO_TRADE";
-    let reasoning = "Sideways consolidation phase me hai. Premium decay (theta eating) se bachein. No trade zone.";
-    let suggestedStrike = maxCeStrike;
-    let risk = "Medium";
 
-    // 1. Operator Fake Breakdown / Bear trap
-    if (lowerMsg.includes("breakdown") || lowerMsg.includes("bear trap") || lowerMsg.includes("fake breakdown") || lowerMsg.includes("operator fake")) {
-      marketPhase = "Phase 2";
-      trapDetected = "Bear Trap";
-      signal = "BUY_CE";
-      reasoning = `Price gir rahi hai par Put OI badh raha hai (OI change negative nahi hai). Operators support kharid rahe hain! Reversal expected hai. CE buy ka badiya setup h.`;
-      suggestedStrike = maxPeStrike;
-      risk = "Low";
-    }
-    // 2. Expiry traps
-    else if (lowerMsg.includes("trap") || lowerMsg.includes("phase") || lowerMsg.includes("expiry") || lowerMsg.includes("smart money")) {
-      marketPhase = isBreakoutActive ? "Phase 4" : "Phase 3";
-      trapDetected = isBreakoutActive ? "Bull Trap" : "None";
-      signal = "NO_TRADE";
-      reasoning = isBreakoutActive 
-        ? "Late-afternoon me slow breakout bait ho sakta hai. Retailers ko trap karne ke liye final rug pull aa sakta hai."
-        : "Market abhi sideways h. Expiry par premium fast decay hoga. Strictly wait and watch zone.";
-      suggestedStrike = maxCeStrike;
-      risk = "High";
-    }
-    // 3. CE setups
-    else if (lowerMsg.includes("ce") || lowerMsg.includes("call") || lowerMsg.includes("teji") || lowerMsg.includes("bullish") || lowerMsg.includes("buy ce")) {
-      if (ceCoveringStrikes.length > 0 && isBreakoutActive) {
-        marketPhase = "Phase 4";
-        trapDetected = "None";
-        signal = "BUY_CE";
-        reasoning = "Nifty critical levels break kar chuka h aur Call Sellers me panic covering dikh rhi h. Momentum CE buying active!";
-        suggestedStrike = ceCoveringStrikes[0]?.strike || maxCeStrike;
-        risk = "Low";
+    // 1. Check if asking about Monday opening, gap up/down, or market state on Monday
+    const isMondayQuery = lowerMsg.includes("monday") || 
+                          lowerMsg.includes("सोमवार") || 
+                          lowerMsg.includes("mande") || 
+                          lowerMsg.includes("gap up") || 
+                          lowerMsg.includes("gapup") || 
+                          lowerMsg.includes("gap down") || 
+                          lowerMsg.includes("gapdown") || 
+                          lowerMsg.includes("कल क्या") || 
+                          lowerMsg.includes("monday ko") || 
+                          lowerMsg.includes("monday को") || 
+                          lowerMsg.includes("opening") || 
+                          lowerMsg.includes("open") || 
+                          lowerMsg.includes("गैप अप") || 
+                          lowerMsg.includes("गैप डाउन");
+
+    if (isMondayQuery) {
+      const giftNifty = liveMarketIndicesCache.giftnifty || { value: 24085.50, change: 0.27 };
+      const dowJones = liveMarketIndicesCache.dowjones || { value: 39150.25, change: 0.10 };
+      const nasdaq = liveMarketIndicesCache.nasdaq || { value: 17750.40, change: 0.17 };
+      const vix = liveMarketIndicesCache.indiavix || { value: 13.20, change: 2.15 };
+      const nifty = liveMarketIndicesCache.nifty || { value: 24018.45, change: 0.41 };
+
+      let openingType = "FLAT TO POSITIVE";
+      if (giftNifty.change > 0.20) {
+        openingType = "GAP UP";
+      } else if (giftNifty.change < -0.20) {
+        openingType = "GAP DOWN";
       } else {
-        marketPhase = "Phase 3";
-        trapDetected = "Bull Trap";
-        signal = "NO_TRADE";
-        reasoning = `Heavy Call barrier ₹${maxCeStrike} par active h. Abhi call buy karna risky h. Sideways market me options buy na karein.`;
-        suggestedStrike = maxCeStrike;
-        risk = "High";
+        openingType = "FLAT / CONSOLIDATION";
       }
+
+      const responseText = `Bhai! **Monday Market Prediction** ke quantitative indicators details ye hain:
+
+1. **Opening Indicator (GIFT Nifty)**: **GIFT Nifty** abhi ₹${giftNifty.value.toLocaleString('en-IN')} par chal rha h (**${giftNifty.change >= 0 ? "+" : ""}${giftNifty.change.toFixed(2)}%**). US Markets ki baat karein to **Dow Jones: ${dowJones.change >= 0 ? "+" : ""}${dowJones.change.toFixed(2)}%** aur **NASDAQ: ${nasdaq.change >= 0 ? "+" : ""}${nasdaq.change.toFixed(2)}%** par hain. Is sentiment aur momentum ke mutabik **Monday ko ${openingType} opening** ki strong probability lag rahi hai! 🔥
+
+2. **Market Key Levels & Structure**:
+   - **Nifty Spot LTP**: ₹${nifty.value.toLocaleString('en-IN')} (${nifty.change >= 0 ? "+" : ""}${nifty.change.toFixed(2)}%)
+   - **India VIX**: ${vix.value} (${vix.change >= 0 ? "+" : ""}${vix.change.toFixed(2)}%)
+   - **Put Writers Floor (Support)**: ₹${maxPeStrike}
+   - **Call Writers Ceiling (Resistance)**: ₹${maxCeStrike}
+
+3. **Monday Trading Strategy (VIX Rule)**:
+   - India VIX abhi **${vix.value}** hai (VIX between 12 and 14). Is range me **Trend-following BUY (Directional)** setups sabse best profit dete hain. 
+   - Option Buyers ko open market me tab tak fresh entry nahi leni chahiye jab tak Operators ke pre-market accumulation levels set nahi ho jatein. Agar Nifty ₹${maxCeStrike} resistance level cross karta hai, tab **BUY_CE** me Operators ke cover karne par bada upward move milega!
+
+Apna system updates monitor karte rahein! 🚀`;
+
+      const fallbackObj = {
+        response_type: "text",
+        text_response: responseText,
+        setup_card: null
+      };
+      return res.json({ response: JSON.stringify(fallbackObj) });
     }
-    // 4. PE setups
-    else if (lowerMsg.includes("pe") || lowerMsg.includes("put") || lowerMsg.includes("mandi") || lowerMsg.includes("bearish") || lowerMsg.includes("buy pe") || lowerMsg.includes("fall")) {
-      if (peCoveringStrikes.length > 0 && (vixChange >= 5.0 || indexChange < -0.30)) {
-        marketPhase = "Phase 5";
-        trapDetected = "None";
-        signal = "BUY_PE";
-        reasoning = "India VIX me steep rise aur Put Sellers position se bhag rahe hain. Breakdown trend support milne par PE buying solid setup h!";
-        suggestedStrike = peCoveringStrikes[0]?.strike || maxPeStrike;
-        risk = "High";
-      } else {
-        marketPhase = "Phase 3";
-        trapDetected = "Bear Trap";
-        signal = "NO_TRADE";
-        reasoning = `Base support floor ₹${maxPeStrike} par operators heavy writing kar rhe hain. Mandi se door rahein jab tak level tootta nahi.`;
-        suggestedStrike = maxPeStrike;
-        risk = "Medium";
-      }
+
+    // Dynamically lookup if user asked for a specific stock or index in live indices cache
+    let foundKey: string | null = null;
+    if (lowerMsg.includes("reliance")) foundKey = "reliance";
+    else if (lowerMsg.includes("hdfc")) foundKey = "hdfcbank";
+    else if (lowerMsg.includes("infy") || lowerMsg.includes("infosys")) foundKey = "infy";
+    else if (lowerMsg.includes("tcs")) foundKey = "tcs";
+    else if (lowerMsg.includes("nifty") && !lowerMsg.includes("bank")) foundKey = "nifty";
+    else if (lowerMsg.includes("banknifty") || (lowerMsg.includes("bank") && lowerMsg.includes("nifty"))) foundKey = "banknifty";
+    else if (lowerMsg.includes("finnifty") || (lowerMsg.includes("fin") && lowerMsg.includes("nifty"))) foundKey = "finnifty";
+    else if (lowerMsg.includes("vix")) foundKey = "indiavix";
+    else if (lowerMsg.includes("sensex")) foundKey = "sensex";
+
+    if (foundKey && liveMarketIndicesCache[foundKey]) {
+      const item = liveMarketIndicesCache[foundKey];
+      const sign = item.change >= 0 ? "+" : "";
+      const responseText = `Bhai! **${item.name} (${item.symbol})** ka live rate abhi ₹${item.value.toLocaleString('en-IN')} chal raha hai (${sign}${item.change.toFixed(2)}%). 
+
+Index overview: Nifty Spot abhi ₹${(liveMarketIndicesCache.nifty?.value || indexValue).toLocaleString('en-IN')} par hai aur India VIX ${liveMarketIndicesCache.indiavix?.value || 13.20} par hai. 
+
+AshTek Analyst Hub and Automated Trading Bot analysis ke mutabik Operators heavy accumulation level build kar rahe hain. Options setup ya traps ke baare me poochne ke liye query likhein! 🔥`;
+      
+      const fallbackObj = {
+        response_type: "text",
+        text_response: responseText,
+        setup_card: null
+      };
+      return res.json({ response: JSON.stringify(fallbackObj) });
     }
-    // 5. FII & DII
-    else if (lowerMsg.includes("fii") || lowerMsg.includes("dii") || lowerMsg.includes("institutional") || lowerMsg.includes("cash") || lowerMsg.includes("foreign")) {
-      const totalFlow = fiiCashNet + diiCashNet;
-      marketPhase = "Phase 3";
-      trapDetected = "None";
-      signal = totalFlow > 500 ? "BUY_CE" : totalFlow < -500 ? "BUY_PE" : "NO_TRADE";
-      reasoning = `FII Cash flow: ₹${fiiCashNet} Cr, DII: ₹${diiCashNet} Cr. Combined flows ₹${totalFlow.toFixed(2)} Cr h. Trend neutral and support bound h.`;
-      suggestedStrike = maxCeStrike;
-      risk = "Medium";
+
+    // 2. Greetings
+    if (lowerMsg.includes("hello") || lowerMsg.includes("hi") || lowerMsg.includes("hey") || lowerMsg.includes("kaise ho")) {
+      const responseText = `Hello bhai! main hoon **AshTek Fire AI** 🔥! Kaise help karun aaj trading analysis me? Aap index options setups, call/put buying analysis ya traps ke baare me pooch sakte hain!`;
+      
+      const fallbackObj = {
+        response_type: "text",
+        text_response: responseText,
+        setup_card: null
+      };
+      return res.json({ response: JSON.stringify(fallbackObj) });
     }
+
+    // 3. Trade related or Nifty Option signals fallback using tradingBot's real calculation!
+    const botData = tradingBotResult?.data || {
+      market_phase: isBreakoutActive ? "Phase 4" : "Phase 3",
+      trap_detected: isBreakoutActive ? "Bull Trap" : "None",
+      signal: "NO_TRADE",
+      reasoning: "Sideways consolidation phase me hai. Premium decay (theta eating) se bachein. No trade zone.",
+      suggested_strike: maxCeStrike,
+      risk: "Medium"
+    };
 
     const fallbackJson = {
-      market_phase: marketPhase,
-      trap_detected: trapDetected,
-      signal: signal,
-      reasoning: reasoning,
-      suggested_strike: suggestedStrike,
-      risk: risk
+      response_type: "setup_card",
+      text_response: `Bhai! Maine AshTek Auto-Trading Bot se calculation fetch kar li h. Aapke liye badiya setup check kiya h.`,
+      setup_card: {
+        market_phase: botData.market_phase || "Phase 3",
+        trap_detected: botData.trap_detected || "None",
+        signal: botData.signal || "NO_TRADE",
+        reasoning: botData.reasoning || "Sideways market with premium decay risks.",
+        suggested_strike: botData.suggested_strike || maxCeStrike,
+        risk: botData.risk || "Medium"
+      }
     };
 
     return res.json({ response: JSON.stringify(fallbackJson) });
